@@ -9,6 +9,7 @@ The strategy focuses on the US market "killzone" session (9:30–11:00 AM Easter
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.
+UI language: French for all user-facing labels, tabs, and documentation within the app.
 
 ## System Architecture
 
@@ -19,20 +20,28 @@ Preferred communication style: Simple, everyday language.
 
 ### Core Components
 
-1. **`app.py`** — Streamlit UI layer. Handles page config, custom CSS styling, file selection, and rendering of backtest results. Uses Plotly for interactive charting.
+1. **`app.py`** — Streamlit UI layer. Handles page config, custom CSS styling, file selection, and rendering of backtest results. Uses Plotly for interactive charting. 9 tabs: Equity Curve, Trade Log, Statistics, Consistance Mensuelle, Statistical Analysis, Daily Analysis, Economic Calendar, Optimizer, Strategy Guide.
 
 2. **`data_loader.py`** — Data ingestion module. Loads historical MNQ futures data from `.pkl` (pickle) files stored in a `data/` directory. Includes compatibility shims (`PlaceholderStringArray`, `CompatStringDtype`, `_fake_pyx_unpickle`) to handle deserialization of pickle files created with different pandas/Cython versions. Also provides `get_active_contract` for futures contract roll management and `list_data_files` for discovering available data files.
 
 3. **`ifvg_strategy.py`** — The core trading strategy engine (`IFVGStrategy` class). Implements:
-   - Fair Value Gap detection with configurable minimum size and max age
+   - Fair Value Gap detection with configurable minimum size and max age (default 8 bars)
    - Killzone-based session filtering (default 9:30–11:00 ET)
    - Risk/reward targeting with configurable ratios
    - Break-even management triggered at a specified RR level
-   - Per-day trade limits and cooldown periods
+   - Per-day trade limits (default 1) and cooldown periods
    - Displacement filtering for entry quality
+   - Stop After Loss: stops trading after first loss of the day
+   - Opening Range Filter: requires opening range bias alignment with H1 bias
    - Day-by-day processing with timezone conversion (UTC → America/New_York)
 
-4. **`attached_assets/`** — Reference/legacy files showing earlier iterations of the data loading and market context analysis logic. These include `DataMaster` class with ICT (Inner Circle Trader) level calculations (midnight open, previous day high/low, macro highs/lows). These files inform the intended direction of the project but may not be fully integrated yet.
+4. **`optimizer.py`** — Parameter optimization engine with pre-computed day data for speed. Includes consistency-weighted scoring (months_below_60, monthly_wr_std, consistency_score). Fixed params include stop_after_loss and opening_range_filter.
+
+5. **`stat_analysis.py`** — Statistical analysis module with monthly consistency metrics, Monte Carlo simulation, and regime analysis.
+
+6. **`econ_calendar.py`** — Economic calendar module with hardcoded event dates (Jan-May 2025) and impact analysis.
+
+7. **`attached_assets/`** — Reference/legacy files showing earlier iterations of the data loading and market context analysis logic.
 
 ### Data Architecture
 - **Storage format**: Pandas DataFrames serialized as `.pkl` (pickle) files, organized by contract and month (e.g., `MNQ_2025_12.pkl`).
@@ -41,31 +50,41 @@ Preferred communication style: Simple, everyday language.
 - **Columns**: Expected to include at minimum `open`, `high`, `low`, `close`, `volume`, and `symbol` (for contract identification).
 - **No database**: The project uses flat file storage only. There is no SQL database or ORM involved.
 
-### Strategy Configuration
-The strategy uses a dictionary-based configuration pattern with optimized defaults:
-- `min_fvg_size`: 4.0 points minimum gap size
-- `max_fvg_age_m15`: 15 bars maximum gap age
+### Strategy Configuration (Optimized Defaults — Feb 2026)
+The strategy uses a dictionary-based configuration pattern with optimized defaults prioritizing **monthly consistency** (60%+ WR every month):
+- `min_fvg_size`: 3.0 points minimum gap size
+- `max_fvg_age_m15`: **8 bars** maximum gap age (reduced from 15 for fresher signals)
 - `rr_target`: 1.2 risk-to-reward ratio
 - `max_risk_pts` / `min_risk_pts`: 25.0 / 5.0 points risk bounds
-- `max_trades_per_day`: 2
+- `max_trades_per_day`: **1** (reduced from 2, critical for consistency)
 - `contract_value`: $2.00 per point (MNQ specification)
 - Break-even trigger at 0.5 RR
-- Trailing stop: trigger at 0.5R, 30% offset
+- Trailing stop: trigger at 0.5R, 30% offset (ESSENTIAL — removing drops WR to 43%)
 - Displacement filter: 55% body ratio, 3.5 pts minimum
 - M1 confirmation candle required
-- Entry start time: 09:45 (delayed from 09:30 for higher WR)
+- `entry_start_time`: **10:05** ET (delayed from 09:45 for higher consistency)
+- `use_stop_after_loss`: **True** (stops trading after first loss of day)
+- `use_opening_range_filter`: **True** (requires OR bias alignment with H1 bias)
 - 10-minute cooldown between trades
+
+### Performance Results (Optimized Config)
+- **137 trades** over ~29 months of data
+- **75.9% overall WR**, +622 pts P&L
+- **93% monthly consistency**: 27/29 qualified months at 60%+ WR
+- Only 2 weak months: 2024-06 (25% WR, 4 trades), 2024-08 (50% WR, 4 trades)
+- Trade frequency: ~0.9 trades/week (below 2-3 target, but consistency prioritized)
+- Key insight: Opening Range filter + 1 trade/day were critical — removing either drops consistency significantly
 
 ### Project Status
 The project is fully implemented with a multi-timeframe IFVG backtest engine and interactive Streamlit dashboard. All core features are complete:
 - Multi-TF approach: H1 bias → M15 FVG detection → M15 inversion → M1 retracement entry
-- Quality filters: M1 confirmation candles, displacement analysis, trailing stops, delayed entry timing
+- Quality filters: M1 confirmation candles, displacement analysis, trailing stops, delayed entry timing, stop-after-loss, opening range filter
 - Market structure analysis: daily/weekly/monthly highs/lows, swing points as liquidity references
 - Economic calendar module (econ_calendar.py) with hardcoded event dates (Jan-May 2025) and impact analysis
 - Target mode selection: Fixed R:R vs SSL/BSL (liquidity level targeting)
-- Performance (3yr backtest): ~65.8% WR, 2.5 trades/week, PF 1.67, +1065 pts, max 4 consecutive losses
-- Dashboard with 6 tabs: Equity Curve, Trade Log, Statistics, Daily Analysis, Economic Calendar, Optimizer
-- Optimizer uses pre-computed confirmation masks for speed (~0.6s/combo)
+- Dashboard with 9 tabs: Equity Curve, Trade Log, Statistics, Consistance Mensuelle, Statistical Analysis, Daily Analysis, Economic Calendar, Optimizer, Strategy Guide
+- Optimizer uses pre-computed confirmation masks for speed (~0.6s/combo) with consistency-weighted scoring
+- Strategy Guide fully documented in French
 
 ## External Dependencies
 
