@@ -32,21 +32,32 @@ class IFVGStrategy:
         else:
             df = df_utc.tz_convert('America/New_York')
 
-        trading_days = sorted(set(df.index.date))
+        df = df.copy()
+        df['_date'] = df.index.date
+        grouped = {d: g for d, g in df.groupby('_date')}
+        trading_days = sorted(grouped.keys())
 
-        for day in trading_days:
-            day_data = df[df.index.date == day]
+        daily_ohlc = df.groupby('_date').agg(
+            day_high=('high', 'max'),
+            day_low=('low', 'min'),
+        )
+
+        lookback_days = self.config['structure_lookback_days']
+
+        for i, day in enumerate(trading_days):
+            day_data = grouped[day]
             if len(day_data) < 30:
                 continue
 
-            lookback_start = day - pd.Timedelta(days=self.config['structure_lookback_days'])
-            history = df[(df.index.date >= lookback_start) & (df.index.date < day)]
+            start_idx = max(0, i - lookback_days)
+            history_days = trading_days[start_idx:i]
+            history_ohlc = daily_ohlc.loc[daily_ohlc.index.isin(history_days)] if history_days else pd.DataFrame()
 
-            self._process_day(day_data, history, day, df)
+            self._process_day(day_data, history_ohlc, day, df)
 
         return self._build_results()
 
-    def _process_day(self, day_data, history, day, full_df):
+    def _process_day(self, day_data, history_ohlc, day, full_df):
         ks = self.config['killzone_start']
         ke = self.config['killzone_end']
 
@@ -54,7 +65,7 @@ class IFVGStrategy:
         if len(killzone_m1) < 5:
             return
 
-        structure = self._compute_structure_levels(history, day_data)
+        structure = self._compute_structure_levels_fast(history_ohlc, day_data)
 
         h1_bias = self._determine_h1_bias(day_data, killzone_m1)
         if h1_bias is None:
@@ -71,7 +82,6 @@ class IFVGStrategy:
             return
 
         m15_fvgs = self._detect_fvgs_m15(m15_data)
-
         m15_ifvgs = self._detect_ifvgs_m15(m15_fvgs, m15_data, h1_bias, structure)
 
         trades_today = 0
@@ -80,31 +90,37 @@ class IFVGStrategy:
         cooldown = self.config['cooldown_minutes']
         used_ifvgs = set()
 
+        kz_highs = killzone_m1['high'].values
+        kz_lows = killzone_m1['low'].values
+        kz_closes = killzone_m1['close'].values
+        kz_times = killzone_m1.index
+
         for i in range(len(killzone_m1)):
             if trades_today >= max_trades:
                 break
 
-            current_time = killzone_m1.index[i]
-            current_bar = killzone_m1.iloc[i]
+            current_time = kz_times[i]
 
             if last_trade_time is not None:
                 minutes_since = (current_time - last_trade_time).total_seconds() / 60
                 if minutes_since < cooldown:
                     continue
 
+            current_bar = {
+                'high': kz_highs[i],
+                'low': kz_lows[i],
+                'close': kz_closes[i],
+            }
+
             for ifvg in m15_ifvgs:
                 if ifvg['id'] in used_ifvgs:
                     continue
                 if trades_today >= max_trades:
                     break
-
                 if ifvg['direction'] != h1_bias:
                     continue
 
-                entry_signal = self._check_m1_retracement(
-                    ifvg, current_bar, current_time
-                )
-
+                entry_signal = self._check_m1_retracement(ifvg, current_bar, current_time)
                 if entry_signal:
                     remaining = day_data[day_data.index > current_time]
                     trade = self._execute_trade(
@@ -117,7 +133,7 @@ class IFVGStrategy:
                         used_ifvgs.add(ifvg['id'])
                         break
 
-    def _compute_structure_levels(self, history, day_data):
+    def _compute_structure_levels_fast(self, history_ohlc, day_data):
         levels = {
             'daily_highs': [],
             'daily_lows': [],
@@ -127,43 +143,39 @@ class IFVGStrategy:
             'swing_lows': [],
         }
 
-        if history.empty:
+        if history_ohlc.empty:
             return levels
 
-        daily = history.resample('D').agg({'high': 'max', 'low': 'min'}).dropna()
-        if not daily.empty:
-            for _, row in daily.iterrows():
-                levels['daily_highs'].append(float(row['high']))
-                levels['daily_lows'].append(float(row['low']))
+        highs = history_ohlc['day_high'].values
+        lows = history_ohlc['day_low'].values
 
-        weekly = history.resample('W').agg({'high': 'max', 'low': 'min'}).dropna()
-        if not weekly.empty:
-            for _, row in weekly.iterrows():
-                levels['weekly_highs'].append(float(row['high']))
-                levels['weekly_lows'].append(float(row['low']))
+        levels['daily_highs'] = [float(h) for h in highs]
+        levels['daily_lows'] = [float(l) for l in lows]
 
-        if len(daily) >= 3:
-            highs = daily['high'].values
-            lows = daily['low'].values
-            for i in range(1, len(daily) - 1):
-                if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-                    levels['swing_highs'].append(float(highs[i]))
-                if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
-                    levels['swing_lows'].append(float(lows[i]))
+        n = len(highs)
+        week_size = 5
+        for ws in range(0, n, week_size):
+            we = min(ws + week_size, n)
+            levels['weekly_highs'].append(float(np.max(highs[ws:we])))
+            levels['weekly_lows'].append(float(np.min(lows[ws:we])))
 
-        if day_data is not None and not day_data.empty:
-            current_price = float(day_data.iloc[-1]['close'])
-            for key in ['daily_highs', 'daily_lows', 'weekly_highs', 'weekly_lows',
-                         'swing_highs', 'swing_lows']:
-                levels[key] = sorted(
-                    [l for l in levels[key] if abs(l - current_price) < 500],
-                    key=lambda x: abs(x - current_price)
-                )[:10]
+        for i in range(1, n - 1):
+            if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
+                levels['swing_highs'].append(float(highs[i]))
+            if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
+                levels['swing_lows'].append(float(lows[i]))
+
+        current_price = float(day_data.iloc[-1]['close']) if not day_data.empty else 0
+        for key in levels:
+            levels[key] = sorted(
+                [l for l in levels[key] if abs(l - current_price) < 500],
+                key=lambda x: abs(x - current_price)
+            )[:10]
 
         if levels['daily_highs']:
-            levels['pdh'] = levels['daily_highs'][-1] if levels['daily_highs'] else None
+            levels['pdh'] = levels['daily_highs'][0]
         if levels['daily_lows']:
-            levels['pdl'] = levels['daily_lows'][-1] if levels['daily_lows'] else None
+            levels['pdl'] = levels['daily_lows'][0]
 
         return levels
 
@@ -172,7 +184,6 @@ class IFVGStrategy:
             return None
 
         kz_start = killzone.index[0]
-
         pre_kz = day_data[day_data.index < kz_start]
         if len(pre_kz) < 60:
             session_start = day_data.between_time('08:30', '09:30')
@@ -192,10 +203,7 @@ class IFVGStrategy:
             return None
 
         last_h1 = h1.iloc[-1]
-        if last_h1['close'] > last_h1['open']:
-            return 'BUY'
-        else:
-            return 'SELL'
+        return 'BUY' if last_h1['close'] > last_h1['open'] else 'SELL'
 
     def _detect_fvgs_m15(self, m15_data):
         fvgs = []
@@ -215,7 +223,7 @@ class IFVGStrategy:
                 mid_body = closes[i - 1] - opens[i - 1]
                 if mid_body > 0:
                     fvgs.append({
-                        'id': f"m15_bull_{times[i]}",
+                        'id': f"m15_bull_{i}_{times[i]}",
                         'type': 'bullish',
                         'top': float(lows[i]),
                         'bottom': float(highs[i - 2]),
@@ -230,7 +238,7 @@ class IFVGStrategy:
                 mid_body = closes[i - 1] - opens[i - 1]
                 if mid_body < 0:
                     fvgs.append({
-                        'id': f"m15_bear_{times[i]}",
+                        'id': f"m15_bear_{i}_{times[i]}",
                         'type': 'bearish',
                         'top': float(lows[i - 2]),
                         'bottom': float(highs[i]),
@@ -257,15 +265,15 @@ class IFVGStrategy:
             if later_bars.empty:
                 continue
 
-            age_bars = len(later_bars)
-            if age_bars > max_age:
-                continue
+            if len(later_bars) > max_age:
+                later_bars = later_bars.iloc[:max_age]
 
-            for j in range(len(later_bars)):
-                bar = later_bars.iloc[j]
+            closes = later_bars['close'].values
+            times = later_bars.index
 
-                if fvg['type'] == 'bullish' and h1_bias == 'SELL':
-                    if bar['close'] < fvg['bottom']:
+            if fvg['type'] == 'bullish' and h1_bias == 'SELL':
+                for j in range(len(closes)):
+                    if closes[j] < fvg['bottom']:
                         ifvgs.append({
                             'id': fvg['id'],
                             'direction': 'SELL',
@@ -273,15 +281,16 @@ class IFVGStrategy:
                             'fvg_bottom': fvg['bottom'],
                             'fvg_midpoint': fvg['midpoint'],
                             'fvg_size': fvg['size'],
-                            'inversion_time': later_bars.index[j],
+                            'inversion_time': times[j],
                             'zone_top': fvg['top'],
                             'zone_bottom': fvg['midpoint'],
                         })
                         fvg['filled'] = True
                         break
 
-                elif fvg['type'] == 'bearish' and h1_bias == 'BUY':
-                    if bar['close'] > fvg['top']:
+            elif fvg['type'] == 'bearish' and h1_bias == 'BUY':
+                for j in range(len(closes)):
+                    if closes[j] > fvg['top']:
                         ifvgs.append({
                             'id': fvg['id'],
                             'direction': 'BUY',
@@ -289,7 +298,7 @@ class IFVGStrategy:
                             'fvg_bottom': fvg['bottom'],
                             'fvg_midpoint': fvg['midpoint'],
                             'fvg_size': fvg['size'],
-                            'inversion_time': later_bars.index[j],
+                            'inversion_time': times[j],
                             'zone_top': fvg['midpoint'],
                             'zone_bottom': fvg['bottom'],
                         })
@@ -310,11 +319,9 @@ class IFVGStrategy:
         if zone_range <= 0:
             return None
 
-        entry_level_top = zone_top
-        entry_level_bottom = zone_top - (zone_range * ret_pct)
-
         if ifvg['direction'] == 'SELL':
-            if bar['high'] >= entry_level_bottom and bar['close'] < entry_level_top:
+            entry_level_bottom = zone_top - (zone_range * ret_pct)
+            if bar['high'] >= entry_level_bottom and bar['close'] < zone_top:
                 return {
                     'direction': 'SELL',
                     'ifvg_id': ifvg['id'],
@@ -328,10 +335,8 @@ class IFVGStrategy:
                 }
 
         elif ifvg['direction'] == 'BUY':
-            adjusted_bottom = zone_bottom
             adjusted_top = zone_bottom + (zone_range * ret_pct)
-
-            if bar['low'] <= adjusted_top and bar['close'] > adjusted_bottom:
+            if bar['low'] <= adjusted_top and bar['close'] > zone_bottom:
                 return {
                     'direction': 'BUY',
                     'ifvg_id': ifvg['id'],
@@ -419,7 +424,6 @@ class IFVGStrategy:
                     dist = entry_price - level
                     if dist >= min_target_distance:
                         candidates.append(level)
-
             if candidates:
                 return max(candidates)
             return entry_price - (risk * self.config['rr_target'])
@@ -431,7 +435,6 @@ class IFVGStrategy:
                     dist = level - entry_price
                     if dist >= min_target_distance:
                         candidates.append(level)
-
             if candidates:
                 return min(candidates)
             return entry_price + (risk * self.config['rr_target'])
@@ -440,37 +443,41 @@ class IFVGStrategy:
         current_sl = sl
         be_activated = False
 
-        for ts, row in future_data.iterrows():
-            h, l, c = row['high'], row['low'], row['close']
+        highs = future_data['high'].values
+        lows = future_data['low'].values
+        closes = future_data['close'].values
+        times = future_data.index
+
+        be_level_buy = entry + (risk * be_trigger) if use_be else None
+        be_level_sell = entry - (risk * be_trigger) if use_be else None
+
+        for i in range(len(future_data)):
+            h, l, c = highs[i], lows[i], closes[i]
 
             if direction == 'BUY':
                 if l <= current_sl:
                     pnl = current_sl - entry
                     label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
-                    return label, current_sl, ts, pnl
+                    return label, current_sl, times[i], pnl
                 if h >= tp:
-                    return 'WIN', tp, ts, tp - entry
-
-                if use_be and not be_activated:
-                    if h >= entry + (risk * be_trigger):
-                        current_sl = entry + 1.0
-                        be_activated = True
-
+                    return 'WIN', tp, times[i], tp - entry
+                if use_be and not be_activated and be_level_buy is not None and h >= be_level_buy:
+                    current_sl = entry + 1.0
+                    be_activated = True
             else:
                 if h >= current_sl:
                     pnl = entry - current_sl
                     label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
-                    return label, current_sl, ts, pnl
+                    return label, current_sl, times[i], pnl
                 if l <= tp:
-                    return 'WIN', tp, ts, entry - tp
+                    return 'WIN', tp, times[i], entry - tp
+                if use_be and not be_activated and be_level_sell is not None and l <= be_level_sell:
+                    current_sl = entry - 1.0
+                    be_activated = True
 
-                if use_be and not be_activated:
-                    if l <= entry - (risk * be_trigger):
-                        current_sl = entry - 1.0
-                        be_activated = True
-
-        pnl = (c - entry) if direction == 'BUY' else (entry - c)
-        return 'EOD', c, future_data.index[-1], pnl
+        last_c = closes[-1]
+        pnl = (last_c - entry) if direction == 'BUY' else (entry - last_c)
+        return 'EOD', last_c, times[-1], pnl
 
     def _build_results(self):
         if not self.trades:
@@ -505,7 +512,8 @@ class IFVGStrategy:
         total_pnl_dollars = df['pnl_dollars'].sum()
         avg_win = df[df['pnl_pts'] > 0]['pnl_pts'].mean() if wins > 0 else 0
         avg_loss = df[df['pnl_pts'] < 0]['pnl_pts'].mean() if losses > 0 else 0
-        profit_factor = abs(df[df['pnl_pts'] > 0]['pnl_pts'].sum() / df[df['pnl_pts'] < 0]['pnl_pts'].sum()) if df[df['pnl_pts'] < 0]['pnl_pts'].sum() != 0 else float('inf')
+        gross_loss = df[df['pnl_pts'] < 0]['pnl_pts'].sum()
+        profit_factor = abs(df[df['pnl_pts'] > 0]['pnl_pts'].sum() / gross_loss) if gross_loss != 0 else float('inf')
 
         max_dd = df['drawdown'].min() if 'drawdown' in df.columns else 0
         max_dd_dollars = max_dd * self.config['contract_value']

@@ -103,13 +103,12 @@ def load_data(files):
 def get_active_contract(df):
     if 'symbol' not in df.columns:
         return df
-    daily_vol = df.groupby([df.index.date, 'symbol'])['volume'].sum().reset_index()
+    df = df.copy()
+    df['_date'] = df.index.date
+    daily_vol = df.groupby(['_date', 'symbol'])['volume'].sum().reset_index()
     daily_vol.columns = ['date', 'symbol', 'volume']
     main_per_day = daily_vol.loc[daily_vol.groupby('date')['volume'].idxmax()]
-    result_frames = []
-    for _, row in main_per_day.iterrows():
-        day_data = df[(df.index.date == row['date']) & (df['symbol'] == row['symbol'])]
-        result_frames.append(day_data)
-    if not result_frames:
-        return df
-    return pd.concat(result_frames).sort_index()
+    active_map = dict(zip(main_per_day['date'], main_per_day['symbol']))
+    df['_active'] = df['_date'].map(active_map)
+    result = df[df['symbol'] == df['_active']].drop(columns=['_date', '_active'])
+    return result.sort_index()
