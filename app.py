@@ -20,21 +20,182 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    div[data-testid="stMetric"] {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid #2d3561;
-        border-radius: 10px;
-        padding: 15px;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    .verdict-trade { color: #00d4aa; font-weight: bold; font-size: 18px; }
-    .verdict-avoid { color: #ff4757; font-weight: bold; font-size: 18px; }
-    .verdict-neutral { color: #ffa502; font-weight: bold; font-size: 18px; }
-    .verdict-nodata { color: #888; font-size: 16px; }
+
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+
+    div[data-testid="stMetric"] {
+        background: linear-gradient(145deg, #161b22 0%, #1c2333 100%);
+        border: 1px solid rgba(0, 212, 170, 0.12);
+        border-radius: 12px;
+        padding: 16px 18px;
+        transition: border-color 0.2s ease;
+    }
+    div[data-testid="stMetric"]:hover {
+        border-color: rgba(0, 212, 170, 0.35);
+    }
+    div[data-testid="stMetric"] label {
+        font-size: 0.72rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #8b949e;
+    }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+        font-weight: 600;
+        font-size: 1.3rem;
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        background: #161b22;
+        border-radius: 10px;
+        padding: 4px;
+        border: 1px solid #21262d;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 8px 16px;
+        font-size: 0.82rem;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        color: #8b949e;
+        border: none;
+        background: transparent;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #c9d1d9;
+        background: rgba(0, 212, 170, 0.06);
+    }
+    .stTabs [aria-selected="true"] {
+        background: rgba(0, 212, 170, 0.12) !important;
+        color: #00d4aa !important;
+        font-weight: 600;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        display: none;
+    }
+    .stTabs [data-baseweb="tab-border"] {
+        display: none;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #21262d;
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    div[data-testid="stExpander"] {
+        border: 1px solid #21262d;
+        border-radius: 10px;
+        background: #161b22;
+    }
+    div[data-testid="stExpander"] summary {
+        font-weight: 500;
+    }
+
+    .main-header {
+        padding: 1.2rem 0 0.6rem 0;
+    }
+    .main-header h1 {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #f0f6fc;
+        margin: 0;
+        letter-spacing: -0.02em;
+    }
+    .main-header p {
+        font-size: 0.85rem;
+        color: #8b949e;
+        margin: 4px 0 0 0;
+        font-weight: 400;
+    }
+
+    .section-divider {
+        border: none;
+        border-top: 1px solid #21262d;
+        margin: 1.5rem 0;
+    }
+
+    h2, h3 {
+        letter-spacing: -0.01em;
+    }
+
+    .verdict-trade { color: #00d4aa; font-weight: 600; font-size: 16px; }
+    .verdict-avoid { color: #ff4757; font-weight: 600; font-size: 16px; }
+    .verdict-neutral { color: #ffa502; font-weight: 600; font-size: 16px; }
+    .verdict-nodata { color: #8b949e; font-size: 14px; }
+
+    button[kind="primary"] {
+        border-radius: 8px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+    }
+
+    .stSlider label, .stCheckbox label, .stSelectbox label, .stMultiSelect label {
+        font-size: 0.82rem;
+        font-weight: 500;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: #0d1117;
+        border-right: 1px solid #21262d;
+    }
+    section[data-testid="stSidebar"] .stMarkdown h2 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #f0f6fc;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding-bottom: 4px;
+        border-bottom: 1px solid #21262d;
+        margin-bottom: 12px;
+    }
+    section[data-testid="stSidebar"] .stMarkdown h3 {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #00d4aa;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-top: 16px;
+        margin-bottom: 8px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("MNQ Futures - IFVG Strategy Backtester")
-st.caption("Multi-Timeframe Inversed Fair Value Gap | H1 Bias → M15 IFVG → M1 Retracement Entry")
+st.markdown("""
+<div class="main-header">
+    <h1>MNQ Futures — IFVG Strategy Backtester</h1>
+    <p>Multi-Timeframe Inversed Fair Value Gap &nbsp;|&nbsp; H1 Bias → M15 IFVG → M1 Retracement Entry</p>
+</div>
+""", unsafe_allow_html=True)
+
+CHART_BASE = dict(
+    template='plotly_dark',
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(22,27,34,0.6)',
+    font=dict(family='Inter, -apple-system, sans-serif', color='#c9d1d9', size=12),
+    margin=dict(l=50, r=20, t=40, b=30),
+    legend=dict(font=dict(size=11)),
+)
+AXIS_DEFAULTS = dict(gridcolor='#21262d', zerolinecolor='#30363d')
+CHART_LAYOUT = {**CHART_BASE, 'xaxis': dict(**AXIS_DEFAULTS), 'yaxis': dict(**AXIS_DEFAULTS)}
+
+COLORS = {
+    'green': '#00d4aa',
+    'red': '#ff4757',
+    'orange': '#ffa502',
+    'blue': '#58a6ff',
+    'gray': '#8b949e',
+    'line': '#ffa502',
+}
 
 data_files = list_data_files()
 file_labels = [os.path.basename(f).replace('.pkl', '').replace('MNQ_', '') for f in data_files]
@@ -192,35 +353,41 @@ if 'results' in st.session_state:
         st.warning("No trades were generated. Try adjusting: lower Min FVG Size, increase Max FVG Age, or widen the killzone.")
         st.stop()
 
-    st.header("Performance Overview")
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         st.metric("Total Trades", metrics['total_trades'])
     with col2:
-        st.metric("Win Rate", f"{metrics['win_rate']}%")
+        wr = metrics['win_rate']
+        st.metric("Win Rate", f"{wr}%", delta=f"{'Strong' if wr >= 60 else 'Moderate' if wr >= 50 else 'Low'}")
     with col3:
-        st.metric("Total P&L (pts)", f"{metrics['total_pnl_pts']:+.1f}")
+        pnl = metrics['total_pnl_pts']
+        st.metric("Total P&L", f"{pnl:+.1f} pts", delta=f"${metrics['total_pnl_dollars']:+.0f}")
     with col4:
-        st.metric("Total P&L ($)", f"${metrics['total_pnl_dollars']:+.2f}")
-    with col5:
         st.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
-    with col6:
-        st.metric("Trades/Week", f"~{metrics.get('trades_per_week', 0):.1f}")
-    with col7:
-        st.metric("Trades/Month", f"~{metrics.get('trades_per_month', 0):.0f}")
-
-    col8, col9, col10, col11, col12 = st.columns(5)
-    with col8:
+    with col5:
         st.metric("Max Drawdown", f"{metrics['max_drawdown_pts']:.1f} pts")
+    with col6:
+        st.metric("Avg R:R Wins", f"{metrics['avg_rr_on_wins']:.2f}")
+
+    col7, col8, col9, col10, col11, col12 = st.columns(6)
+    with col7:
+        st.metric("Trades/Week", f"~{metrics.get('trades_per_week', 0):.1f}")
+    with col8:
+        st.metric("Trades/Month", f"~{metrics.get('trades_per_month', 0):.0f}")
     with col9:
-        st.metric("Avg R:R on Wins", f"{metrics['avg_rr_on_wins']:.2f}")
-    with col10:
         st.metric("Max Loss Streak", f"{metrics.get('max_consecutive_losses', 0)}")
+    with col10:
+        wd = metrics['winning_days']
+        td = max(metrics['total_trading_days'], 1)
+        st.metric("Win Days", f"{wd}/{td}", delta=f"{wd/td*100:.0f}%")
     with col11:
-        st.metric("Win Days", f"{metrics['winning_days']}/{metrics['total_trading_days']}")
-    with col12:
         st.metric("Avg Daily P&L", f"{metrics['avg_daily_pnl']:+.1f} pts")
+    with col12:
+        st.metric("Best Day", f"{metrics['best_day_pts']:+.1f} pts")
+
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Equity Curve", "Trade Log", "Statistics", "Statistical Analysis", "Daily Analysis", "Economic Calendar", "Optimizer", "Strategy Guide"
@@ -241,63 +408,59 @@ if 'results' in st.session_state:
                 y=trades_df['cum_pnl_pts'],
                 mode='lines+markers',
                 name='Cumulative P&L',
-                line=dict(color='#00d4aa', width=2),
+                line=dict(color=COLORS['green'], width=2),
                 marker=dict(
-                    size=8,
-                    color=['#00d4aa' if p > 0 else '#ff4757' for p in trades_df['pnl_pts']],
+                    size=6,
+                    color=[COLORS['green'] if p > 0 else COLORS['red'] for p in trades_df['pnl_pts']],
                 ),
                 hovertemplate="Trade #%{x}<br>Cum P&L: %{y:.1f} pts<extra></extra>"
             ),
             row=1, col=1,
         )
 
-        fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5, row=1, col=1)
+        fig.add_hline(y=0, line_dash="dash", line_color="#30363d", opacity=0.8, row=1, col=1)
 
         fig.add_trace(
             go.Bar(
                 x=list(range(len(trades_df))),
                 y=trades_df['drawdown'],
                 name='Drawdown',
-                marker_color='#ff4757',
-                opacity=0.6,
+                marker_color=COLORS['red'],
+                opacity=0.5,
             ),
             row=2, col=1,
         )
 
         fig.update_layout(
-            height=550,
-            template='plotly_dark',
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=50, r=20, t=40, b=30),
+            **{k: v for k, v in CHART_LAYOUT.items() if k != 'legend'},
+            height=550, showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=11, color='#c9d1d9')),
         )
-        fig.update_xaxes(title_text="Trade Number", row=2, col=1)
-        fig.update_yaxes(title_text="Points", row=1, col=1)
-        fig.update_yaxes(title_text="Points", row=2, col=1)
+        fig.update_xaxes(title_text="Trade Number", row=2, col=1, gridcolor='#21262d')
+        fig.update_yaxes(title_text="Points", row=1, col=1, gridcolor='#21262d')
+        fig.update_yaxes(title_text="Points", row=2, col=1, gridcolor='#21262d')
 
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("Equity Over Time")
         fig_time = go.Figure()
         fig_time.add_trace(go.Scatter(
             x=trades_df['entry_time'],
             y=trades_df['cum_pnl_pts'],
             mode='lines+markers',
             name='P&L over time',
-            line=dict(color='#00d4aa', width=2),
+            line=dict(color=COLORS['green'], width=2),
             marker=dict(
-                size=7,
-                color=['#00d4aa' if r == 'WIN' else '#ff4757' if r == 'LOSS' else '#ffa502'
+                size=5,
+                color=[COLORS['green'] if r == 'WIN' else COLORS['red'] if r == 'LOSS' else COLORS['orange']
                        for r in trades_df['result']],
             ),
         ))
-        fig_time.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+        fig_time.add_hline(y=0, line_dash="dash", line_color="#30363d", opacity=0.8)
         fig_time.update_layout(
-            height=350,
-            template='plotly_dark',
+            **CHART_LAYOUT,
+            height=320,
             xaxis_title="Date",
             yaxis_title="Cumulative P&L (pts)",
-            margin=dict(l=50, r=20, t=20, b=30),
         )
         st.plotly_chart(fig_time, use_container_width=True)
 
@@ -354,8 +517,6 @@ if 'results' in st.session_state:
         st.caption(f"Showing {len(filtered)} of {len(trades_df)} trades")
 
     with tab3:
-        st.subheader("Detailed Statistics")
-
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -364,50 +525,59 @@ if 'results' in st.session_state:
             st.metric("Losses", metrics['losses'])
             st.metric("Breakevens", metrics['breakevens'])
             st.metric("EOD Exits", metrics['eod_exits'])
-            st.metric("Win Rate", f"{metrics['win_rate']}%")
 
         with col2:
             st.markdown("#### P&L Analysis")
-            st.metric("Total P&L (pts)", f"{metrics['total_pnl_pts']:+.2f}")
-            st.metric("Avg Win (pts)", f"{metrics['avg_win_pts']:+.2f}")
-            st.metric("Avg Loss (pts)", f"{metrics['avg_loss_pts']:.2f}")
+            st.metric("Total P&L", f"{metrics['total_pnl_pts']:+.2f} pts")
+            st.metric("Avg Win", f"{metrics['avg_win_pts']:+.2f} pts")
+            st.metric("Avg Loss", f"{metrics['avg_loss_pts']:.2f} pts")
             st.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
-            st.metric("Avg R:R on Wins", f"{metrics['avg_rr_on_wins']:.2f}")
 
         with col3:
             st.markdown("#### Streaks & Risk")
-            st.metric("Max Drawdown (pts)", f"{metrics['max_drawdown_pts']:.2f}")
-            st.metric("Max Drawdown ($)", f"${metrics['max_drawdown_dollars']:.2f}")
-            st.metric("Max Consecutive Wins", metrics['max_consecutive_wins'])
-            st.metric("Max Consecutive Losses", metrics['max_consecutive_losses'])
+            st.metric("Max Drawdown", f"{metrics['max_drawdown_pts']:.2f} pts")
+            st.metric("Max DD ($)", f"${metrics['max_drawdown_dollars']:.2f}")
+            st.metric("Max Consec. Wins", metrics['max_consecutive_wins'])
+            st.metric("Max Consec. Losses", metrics['max_consecutive_losses'])
 
-        st.subheader("Result Distribution")
-        fig_dist = go.Figure()
-        results_counts = trades_df['result'].value_counts()
-        colors_map = {'WIN': '#00d4aa', 'LOSS': '#ff4757', 'BE': '#ffa502', 'EOD': '#747d8c'}
-        fig_dist.add_trace(go.Pie(
-            labels=results_counts.index,
-            values=results_counts.values,
-            marker_colors=[colors_map.get(r, '#747d8c') for r in results_counts.index],
-            hole=0.4,
-            textinfo='label+percent+value',
-        ))
-        fig_dist.update_layout(height=350, template='plotly_dark', margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-        st.subheader("P&L Distribution")
-        fig_pnl = go.Figure()
-        fig_pnl.add_trace(go.Histogram(x=trades_df['pnl_pts'], nbinsx=20, marker_color='#00d4aa', opacity=0.7))
-        fig_pnl.add_vline(x=0, line_dash="dash", line_color="white", opacity=0.5)
-        fig_pnl.update_layout(
-            height=300, template='plotly_dark',
-            xaxis_title="P&L (Points)", yaxis_title="Frequency",
-            margin=dict(l=50, r=20, t=20, b=30),
-        )
-        st.plotly_chart(fig_pnl, use_container_width=True)
+        dist_col, pnl_col = st.columns(2)
+
+        with dist_col:
+            st.markdown("#### Result Distribution")
+            fig_dist = go.Figure()
+            results_counts = trades_df['result'].value_counts()
+            colors_map = {'WIN': COLORS['green'], 'LOSS': COLORS['red'], 'BE': COLORS['orange'], 'EOD': COLORS['gray']}
+            fig_dist.add_trace(go.Pie(
+                labels=results_counts.index,
+                values=results_counts.values,
+                marker_colors=[colors_map.get(r, COLORS['gray']) for r in results_counts.index],
+                hole=0.45,
+                textinfo='label+percent+value',
+                textfont=dict(size=12),
+            ))
+            fig_dist.update_layout(**CHART_LAYOUT, height=320)
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+        with pnl_col:
+            st.markdown("#### P&L Distribution")
+            fig_pnl = go.Figure()
+            fig_pnl.add_trace(go.Histogram(
+                x=trades_df['pnl_pts'], nbinsx=25,
+                marker_color=COLORS['green'], opacity=0.7,
+                marker_line=dict(color=COLORS['green'], width=0.5),
+            ))
+            fig_pnl.add_vline(x=0, line_dash="dash", line_color="#30363d", opacity=0.8)
+            fig_pnl.update_layout(
+                **CHART_LAYOUT, height=320,
+                xaxis_title="P&L (Points)", yaxis_title="Frequency",
+            )
+            st.plotly_chart(fig_pnl, use_container_width=True)
 
         if 'direction' in trades_df.columns:
-            st.subheader("Performance by Direction")
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+            st.markdown("#### Performance by Direction")
             dir_stats = trades_df.groupby('direction').agg(
                 count=('pnl_pts', 'count'),
                 total_pnl=('pnl_pts', 'sum'),
@@ -447,19 +617,18 @@ if 'results' in st.session_state:
             fig_yearly = make_subplots(specs=[[{"secondary_y": True}]])
             fig_yearly.add_trace(
                 go.Bar(x=yearly_df['year'].astype(str), y=yearly_df['pnl'],
-                       name='P&L (pts)', marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in yearly_df['pnl']]),
+                       name='P&L (pts)', marker_color=[COLORS['green'] if p > 0 else COLORS['red'] for p in yearly_df['pnl']]),
                 secondary_y=False,
             )
             fig_yearly.add_trace(
                 go.Scatter(x=yearly_df['year'].astype(str), y=yearly_df['win_rate'],
                            name='Win Rate %', mode='lines+markers',
-                           line=dict(color='#ffa502', width=3), marker=dict(size=10)),
+                           line=dict(color=COLORS['line'], width=2), marker=dict(size=8)),
                 secondary_y=True,
             )
-            fig_yearly.update_layout(height=300, template='plotly_dark', title="Yearly Performance",
-                                      margin=dict(l=50, r=50, t=40, b=30))
-            fig_yearly.update_yaxes(title_text="P&L (pts)", secondary_y=False)
-            fig_yearly.update_yaxes(title_text="Win Rate %", secondary_y=True)
+            fig_yearly.update_layout(**CHART_LAYOUT, height=280, title="Yearly Performance")
+            fig_yearly.update_yaxes(title_text="P&L (pts)", secondary_y=False, gridcolor='#21262d')
+            fig_yearly.update_yaxes(title_text="Win Rate %", secondary_y=True, gridcolor='#21262d')
             st.plotly_chart(fig_yearly, use_container_width=True)
 
         monthly_df = pd.DataFrame(cohort['monthly'])
@@ -468,18 +637,18 @@ if 'results' in st.session_state:
             fig_monthly.add_trace(go.Bar(
                 x=monthly_df['year_month'], y=monthly_df['pnl'],
                 name='Monthly P&L',
-                marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in monthly_df['pnl']],
+                marker_color=[COLORS['green'] if p > 0 else COLORS['red'] for p in monthly_df['pnl']],
             ))
             fig_monthly.add_trace(go.Scatter(
                 x=monthly_df['year_month'], y=monthly_df['win_rate'],
                 name='Win Rate %', yaxis='y2', mode='lines+markers',
-                line=dict(color='#ffa502', width=2), marker=dict(size=5),
+                line=dict(color=COLORS['line'], width=2), marker=dict(size=4),
             ))
             fig_monthly.update_layout(
-                height=350, template='plotly_dark', title="Monthly Breakdown",
-                yaxis=dict(title='P&L (pts)'),
-                yaxis2=dict(title='Win Rate %', overlaying='y', side='right'),
-                margin=dict(l=50, r=50, t=40, b=30),
+                **CHART_BASE, height=320, title="Monthly Breakdown",
+                xaxis=dict(**AXIS_DEFAULTS),
+                yaxis=dict(title='P&L (pts)', **AXIS_DEFAULTS),
+                yaxis2=dict(title='Win Rate %', overlaying='y', side='right', **AXIS_DEFAULTS),
             )
             st.plotly_chart(fig_monthly, use_container_width=True)
 
@@ -488,22 +657,22 @@ if 'results' in st.session_state:
             fig_dow = go.Figure()
             fig_dow.add_trace(go.Bar(
                 x=dow_df['day_of_week'], y=dow_df['pnl'],
-                name='P&L', marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in dow_df['pnl']],
+                name='P&L', marker_color=[COLORS['green'] if p > 0 else COLORS['red'] for p in dow_df['pnl']],
             ))
             fig_dow.add_trace(go.Scatter(
                 x=dow_df['day_of_week'], y=dow_df['win_rate'],
                 name='Win Rate %', yaxis='y2', mode='lines+markers',
-                line=dict(color='#ffa502', width=3), marker=dict(size=10),
+                line=dict(color=COLORS['line'], width=2), marker=dict(size=8),
             ))
             fig_dow.update_layout(
-                height=300, template='plotly_dark', title="Performance by Day of Week",
-                yaxis=dict(title='P&L (pts)'),
-                yaxis2=dict(title='Win Rate %', overlaying='y', side='right'),
-                margin=dict(l=50, r=50, t=40, b=30),
+                **CHART_BASE, height=280, title="Performance by Day of Week",
+                xaxis=dict(**AXIS_DEFAULTS),
+                yaxis=dict(title='P&L (pts)', **AXIS_DEFAULTS),
+                yaxis2=dict(title='Win Rate %', overlaying='y', side='right', **AXIS_DEFAULTS),
             )
             st.plotly_chart(fig_dow, use_container_width=True)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("### 2. Statistical Robustness")
         st.caption("Profit factor, Z-Score (randomness test), expectancy, and Kelly criterion")
 
@@ -538,7 +707,7 @@ if 'results' in st.session_state:
             else:
                 st.info(f"Z-Score Interpretation: {robust['z_interpretation']}")
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("### 3. Streak Analysis")
         st.caption("Consecutive wins/losses and drawdown recovery")
 
@@ -570,27 +739,25 @@ if 'results' in st.session_state:
                     fig_ws = go.Figure(go.Bar(
                         x=[str(k) for k in win_dist.keys()],
                         y=list(win_dist.values()),
-                        marker_color='#00d4aa',
+                        marker_color=COLORS['green'],
                     ))
-                    fig_ws.update_layout(height=250, template='plotly_dark',
+                    fig_ws.update_layout(**CHART_LAYOUT, height=240,
                                           title="Win Streak Distribution",
-                                          xaxis_title="Streak Length", yaxis_title="Count",
-                                          margin=dict(l=40, r=20, t=40, b=30))
+                                          xaxis_title="Streak Length", yaxis_title="Count")
                     st.plotly_chart(fig_ws, use_container_width=True)
             with sd2:
                 if loss_dist:
                     fig_ls = go.Figure(go.Bar(
                         x=[str(k) for k in loss_dist.keys()],
                         y=list(loss_dist.values()),
-                        marker_color='#ff4757',
+                        marker_color=COLORS['red'],
                     ))
-                    fig_ls.update_layout(height=250, template='plotly_dark',
+                    fig_ls.update_layout(**CHART_LAYOUT, height=240,
                                           title="Loss Streak Distribution",
-                                          xaxis_title="Streak Length", yaxis_title="Count",
-                                          margin=dict(l=40, r=20, t=40, b=30))
+                                          xaxis_title="Streak Length", yaxis_title="Count")
                     st.plotly_chart(fig_ls, use_container_width=True)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("### 4. Real Risk/Reward Analysis")
         st.caption("Observed win rate vs breakeven win rate, and execution quality")
 
@@ -620,26 +787,29 @@ if 'results' in st.session_state:
         fig_rr.add_trace(go.Indicator(
             mode="gauge+number+delta",
             value=rr_analysis['observed_win_rate'],
-            title={'text': "Win Rate vs Breakeven"},
+            title={'text': "Win Rate vs Breakeven", 'font': {'size': 14, 'color': '#c9d1d9'}},
+            number={'font': {'size': 28, 'color': '#f0f6fc'}},
             delta={'reference': rr_analysis['breakeven_win_rate'], 'suffix': '%'},
             gauge={
-                'axis': {'range': [0, 100]},
-                'bar': {'color': '#00d4aa'},
+                'axis': {'range': [0, 100], 'tickcolor': '#8b949e'},
+                'bar': {'color': COLORS['green']},
+                'bgcolor': '#161b22',
+                'bordercolor': '#21262d',
                 'steps': [
-                    {'range': [0, rr_analysis['breakeven_win_rate']], 'color': 'rgba(255,71,87,0.3)'},
-                    {'range': [rr_analysis['breakeven_win_rate'], 100], 'color': 'rgba(0,212,170,0.15)'},
+                    {'range': [0, rr_analysis['breakeven_win_rate']], 'color': 'rgba(255,71,87,0.2)'},
+                    {'range': [rr_analysis['breakeven_win_rate'], 100], 'color': 'rgba(0,212,170,0.1)'},
                 ],
                 'threshold': {
-                    'line': {'color': '#ffa502', 'width': 4},
+                    'line': {'color': COLORS['line'], 'width': 3},
                     'thickness': 0.75,
                     'value': rr_analysis['breakeven_win_rate'],
                 },
             },
         ))
-        fig_rr.update_layout(height=300, template='plotly_dark', margin=dict(l=30, r=30, t=50, b=30))
+        fig_rr.update_layout(**CHART_LAYOUT, height=280)
         st.plotly_chart(fig_rr, use_container_width=True)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("### 5. Performance Volatility")
         st.caption("Sharpe, Sortino, Calmar ratios and P&L distribution properties")
 
@@ -674,19 +844,18 @@ if 'results' in st.session_state:
             fig_mr = go.Figure()
             fig_mr.add_trace(go.Bar(
                 x=mr_df['month'], y=mr_df['pnl'],
-                marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in mr_df['pnl']],
+                marker_color=[COLORS['green'] if p > 0 else COLORS['red'] for p in mr_df['pnl']],
             ))
             cum_monthly = mr_df['pnl'].cumsum()
             fig_mr.add_trace(go.Scatter(
                 x=mr_df['month'], y=cum_monthly,
                 mode='lines', name='Cumulative',
-                line=dict(color='#ffa502', width=2),
+                line=dict(color=COLORS['line'], width=2),
             ))
             fig_mr.update_layout(
-                height=350, template='plotly_dark',
+                **CHART_LAYOUT, height=320,
                 title="Monthly P&L Distribution",
                 xaxis_title="Month", yaxis_title="P&L (pts)",
-                margin=dict(l=50, r=20, t=40, b=30),
             )
             st.plotly_chart(fig_mr, use_container_width=True)
 
@@ -707,8 +876,6 @@ if 'results' in st.session_state:
                 st.metric("Worst Month", f"{worst_month['month']}: {worst_month['pnl']:+.1f}")
 
     with tab5:
-        st.subheader("Daily Performance Breakdown")
-
         daily = trades_df.groupby('trade_date').agg(
             trades=('pnl_pts', 'count'),
             pnl=('pnl_pts', 'sum'),
@@ -730,7 +897,7 @@ if 'results' in st.session_state:
                 x=daily['trade_date'].astype(str),
                 y=daily['pnl'],
                 name='Daily P&L',
-                marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in daily['pnl']],
+                marker_color=[COLORS['green'] if p > 0 else COLORS['red'] for p in daily['pnl']],
             ),
             row=1, col=1,
         )
@@ -741,15 +908,17 @@ if 'results' in st.session_state:
                 y=daily['cum_pnl'],
                 mode='lines+markers',
                 name='Cumulative',
-                line=dict(color='#ffa502', width=2),
+                line=dict(color=COLORS['line'], width=2),
+                marker=dict(size=4),
             ),
             row=2, col=1,
         )
 
         fig_daily.update_layout(
-            height=550, template='plotly_dark', showlegend=True,
-            margin=dict(l=50, r=20, t=40, b=30),
+            **CHART_LAYOUT, height=520, showlegend=True,
         )
+        fig_daily.update_xaxes(gridcolor='#21262d')
+        fig_daily.update_yaxes(gridcolor='#21262d')
         st.plotly_chart(fig_daily, use_container_width=True)
 
         col1, col2, col3 = st.columns(3)
@@ -787,7 +956,7 @@ if 'results' in st.session_state:
                 with nc4:
                     st.metric("Profit Factor", f"{normal_stats.get('profit_factor', 0):.2f}")
 
-            st.markdown("---")
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
             st.markdown("#### Event Day Analysis")
 
             for rec in recommendations:
@@ -822,7 +991,7 @@ if 'results' in st.session_state:
                         with ec5:
                             st.metric("PF", f"{stats.get('profit_factor', 0):.2f}")
 
-            st.markdown("---")
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
             st.markdown("#### Full Comparison Table")
 
             comparison_data = []
@@ -838,7 +1007,7 @@ if 'results' in st.session_state:
                 })
             st.dataframe(pd.DataFrame(comparison_data), use_container_width=True)
 
-            st.markdown("---")
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
             st.markdown("#### Economic Events Calendar")
             events_df = get_events_df()
             holidays_df = get_holidays_df()
@@ -895,7 +1064,7 @@ if 'results' in st.session_state:
 
             if len(top_saved) > 0:
                 best = top_saved.iloc[0]
-                st.markdown("---")
+                st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
                 st.markdown("#### Best Configuration Found")
 
                 bc1, bc2, bc3, bc4, bc5 = st.columns(5)
@@ -921,7 +1090,7 @@ if 'results' in st.session_state:
                     st.info("Copy these values into the sidebar parameters and re-run the backtest to verify.")
 
             if len(top_saved) >= 3:
-                st.markdown("---")
+                st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
                 st.markdown("#### Parameter Sensitivity Analysis")
 
                 for param in available_param_cols:
@@ -931,21 +1100,19 @@ if 'results' in st.session_state:
                             x=top_saved[param].head(20).astype(str),
                             y=top_saved['total_pnl_pts'].head(20),
                             name=param,
-                            marker_color='#00d4aa',
+                            marker_color=COLORS['green'],
                         ))
                         fig_sens.update_layout(
-                            height=250,
-                            template='plotly_dark',
+                            **CHART_LAYOUT, height=240,
                             title=f"P&L by {param} (Top 20 configs)",
                             xaxis_title=param,
                             yaxis_title="Total P&L (pts)",
-                            margin=dict(l=50, r=20, t=40, b=30),
                         )
                         st.plotly_chart(fig_sens, use_container_width=True)
         else:
             st.info("No optimization results found yet.")
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("#### Run New Optimization")
 
         grid_size = get_param_grid_size()
@@ -1008,7 +1175,7 @@ if 'results' in st.session_state:
 
         config_used = st.session_state.get('config', {})
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 0 : Preparation Pre-Session")
         st.markdown("""
 **Objectif** : Rassembler toutes les donnees de contexte AVANT l'ouverture de la killzone.
@@ -1026,7 +1193,7 @@ if 'results' in st.session_state:
 Seuls les niveaux situes a **moins de 500 points du prix actuel** sont retenus, tries par proximite (les 10 plus proches par categorie). PDH et PDL sont les premiers elements de ces listes triees.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 1 : Filtres Journaliers (Pre-Killzone)")
         st.markdown("""
 **Objectif** : Eliminer les jours a faible potentiel AVANT toute analyse.
@@ -1042,7 +1209,7 @@ Seuls les niveaux situes a **moins de 500 points du prix actuel** sont retenus, 
 - **Trop grand** (>400 pts) = marche trop erratique, risque eleve de faux signaux
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 2 : Determination du Biais H1 (Horaire)")
         st.markdown("""
 **Objectif** : Definir la direction dominante du marche AVANT la killzone. C'est le filtre directionnel principal.
@@ -1067,7 +1234,7 @@ Seuls les niveaux situes a **moins de 500 points du prix actuel** sont retenus, 
 - **Le biais multi-jours doit concorder avec le biais H1**, sinon on ne trade pas
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 3 : Momentum Pre-Session *(optionnel)*")
         st.markdown("""
 **Objectif** : Verifier que l'elan pre-killzone ne contredit pas le biais H1.
@@ -1084,7 +1251,7 @@ Seuls les niveaux situes a **moins de 500 points du prix actuel** sont retenus, 
 La logique : si les institutionnels poussent fort dans la direction opposee au biais avant l'ouverture, le biais H1 est probablement invalide.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 4 : Detection des FVG sur M15")
         st.markdown("""
 **Objectif** : Identifier les desequilibres de prix (Fair Value Gaps) sur le timeframe 15 minutes.
@@ -1118,7 +1285,7 @@ Bougie 1 (low)   ─────────
 **Proprietes enregistrees** : top, bottom, midpoint (point milieu), taille en points, timestamp
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 5 : Filtre de Displacement (Qualite du FVG)")
         st.markdown("""
 **Objectif** : Ne garder que les FVG crees par un mouvement **impulsif et decisif** — signe d'activite institutionnelle.
@@ -1143,7 +1310,7 @@ body_size = |close - open|
 **Les deux criteres doivent etre remplis** simultanement. Un FVG cree par une bougie a petits corps ou a grandes meches est considere comme faible et est elimine.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 6 : Detection de l'Inversion (IFVG)")
         st.markdown("""
 **Objectif** : Identifier le moment ou un FVG est **inverse** — c'est-a-dire que le prix traverse completement le FVG et cloture de l'autre cote. C'est le signal principal de la strategie.
@@ -1166,7 +1333,7 @@ body_size = |close - open|
 **Alignement obligatoire** : L'inversion ne produit un signal que si elle est **dans la direction du biais H1**.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 7 : Filtres Additionnels sur les IFVGs *(optionnels)*")
         st.markdown("""
 **7a. Confluence Structurelle** :
@@ -1182,7 +1349,7 @@ body_size = |close - open|
 - La logique ICT : les smart money provoquent un sweep de liquidite avant de reverser
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 8 : Recherche d'Entree sur M1 (Killzone)")
         st.markdown("""
 **Objectif** : Trouver le point d'entree precis sur le timeframe 1 minute, en attendant un retracement dans la zone IFVG.
@@ -1213,7 +1380,7 @@ Le prix retrace vers le bas dans la zone d'achat, mais ne la casse pas — signe
 **Cooldown** : Minimum **10 minutes** entre deux entrees (evite le sur-trading apres un stop).
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 9 : Confirmation M1 (Bougie de Validation)")
         st.markdown("""
 **Objectif** : Exiger une bougie de confirmation sur M1 pour valider l'entree — ultime filtre de qualite.
@@ -1235,7 +1402,7 @@ Le prix retrace vers le bas dans la zone d'achat, mais ne la casse pas — signe
 **Interpretation** : La bougie de confirmation montre que le prix a ete rejete dans la zone IFVG. C'est la preuve visuelle que les participants ont reagi au niveau.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 9b : Momentum M1 *(optionnel)*")
         st.markdown("""
 **Objectif** : Verifier que les dernieres bougies M1 montrent un elan coherent avec la direction du trade.
@@ -1250,7 +1417,7 @@ Le prix retrace vers le bas dans la zone d'achat, mais ne la casse pas — signe
 **Si active** : Ce filtre s'applique **apres** la confirmation M1. Les deux doivent etre valides pour entrer.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 10 : Execution du Trade")
         st.markdown("""
 **Objectif** : Definir prix d'entree, stop loss, et take profit avec precision.
@@ -1289,7 +1456,7 @@ risk = |entry_price - stop_loss|
 **Valeur du point** : $2.00 par point (specification MNQ)
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 11 : Gestion Active du Trade")
         st.markdown("""
 **Objectif** : Proteger le capital et securiser les profits en cours de trade.
@@ -1324,7 +1491,7 @@ risk = |entry_price - stop_loss|
 5. Fin de journee → sortie forcee
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Phase 12 : Limites de Position et Regles de Gestion")
         st.markdown("""
 **Objectif** : Controler l'exposition et eviter le sur-trading.
@@ -1342,7 +1509,7 @@ risk = |entry_price - stop_loss|
 **Utilisation unique des IFVG** : Une fois qu'un IFVG a genere un trade (gagnant ou perdant), il ne peut plus etre utilise. Cela evite de re-entrer sur une zone deja exploitee.
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Resume Visuel : Checklist de Prise de Position")
 
         st.markdown("""
@@ -1378,7 +1545,7 @@ GESTION DU TRADE
 ```
 """)
 
-        st.markdown("---")
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("## Parametres Optimises (Configuration Actuelle)")
         if config_used:
             param_display = {
@@ -1413,30 +1580,30 @@ GESTION DU TRADE
             st.info("Lancez un backtest pour voir les parametres utilises.")
 
 else:
-    st.info("Configure strategy parameters in the sidebar and click **Run Backtest** to start.")
+    st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-    with st.expander("About the Multi-TF IFVG Strategy"):
+    lc, rc = st.columns([2, 1])
+    with lc:
         st.markdown("""
-        **Multi-Timeframe Inversed Fair Value Gap (IFVG)** approach:
+#### How It Works
 
-        1. **H1 Bias** — Determine the hourly trend direction before the killzone opens
+This backtester implements a **Multi-Timeframe Inversed Fair Value Gap (IFVG)** strategy on MNQ futures, designed to capture high-probability setups during the US market killzone.
 
-        2. **Market Structure** — Compute daily, weekly and swing highs/lows as liquidity targets and reference points
+**The process in 5 steps:**
 
-        3. **M15 FVG Detection** — Identify Fair Value Gaps on the 15-minute timeframe
-           - Bullish FVG: Gap between candle 1 high and candle 3 low
-           - Bearish FVG: Gap between candle 1 low and candle 3 high
+1. **H1 Bias** — Determine directional bias from the hourly chart before 9:30 ET
+2. **M15 FVG Detection** — Identify institutional price imbalances on the 15-minute timeframe
+3. **Inversion Signal** — Wait for price to trade through and close beyond the FVG
+4. **M1 Precision Entry** — Enter on a confirmed retracement into the inverted zone
+5. **Managed Exit** — Breakeven protection, trailing stop, and fixed R:R or liquidity targets
 
-        4. **M15 Inversion** — Watch for price to trade through and close beyond the FVG (aligned with H1 bias)
-
-        5. **M1 Retracement Entry** — Wait for price to retrace back into the inverted FVG zone on the 1-minute chart
-
-        6. **Target Options**:
-           - **Fixed R:R** — Take profit at a fixed multiple of risk
-           - **SSL/BSL** — Target the nearest sell-side or buy-side liquidity level
-
-        7. **Killzone** — All entries between 9:30-11:00 ET only
-        """)
-
-    if data_files:
-        st.markdown(f"**{len(data_files)} data file(s) available:** {', '.join(file_labels)}")
+Configure parameters in the sidebar, then click **Run Backtest** to analyze performance.
+""")
+    with rc:
+        st.markdown("#### Data Available")
+        if data_files:
+            for lbl in file_labels:
+                st.markdown(f"- `{lbl}`")
+            st.caption(f"{len(data_files)} month(s) loaded")
+        else:
+            st.warning("No data files found.")
