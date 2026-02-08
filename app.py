@@ -8,6 +8,8 @@ import os
 from data_loader import list_data_files, load_data, get_active_contract
 from ifvg_strategy import IFVGStrategy
 from econ_calendar import analyze_event_impact, get_event_recommendations, get_events_df, get_holidays_df
+from optimizer import run_optimization, PARAM_GRID, FIXED_PARAMS, get_param_grid_size
+import json
 
 st.set_page_config(
     page_title="MNQ IFVG Backtester",
@@ -152,8 +154,8 @@ if 'results' in st.session_state:
     with col10:
         st.metric("Avg Daily P&L", f"{metrics['avg_daily_pnl']:+.1f} pts")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Equity Curve", "Trade Log", "Statistics", "Daily Analysis", "Economic Calendar"
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Equity Curve", "Trade Log", "Statistics", "Daily Analysis", "Economic Calendar", "Optimizer"
     ])
 
     with tab1:
@@ -491,6 +493,152 @@ if 'results' in st.session_state:
             with col_hol:
                 st.markdown("##### US Market Holidays")
                 st.dataframe(holidays_df, use_container_width=True)
+
+    with tab6:
+        st.subheader("Parameter Optimizer")
+        st.caption("Find the best strategy parameters by testing hundreds of combinations on your data")
+
+        if os.path.exists('optimization_results.json'):
+            with open('optimization_results.json', 'r') as f:
+                saved_results = json.load(f)
+
+            st.success(f"Last optimization: {saved_results['total_combos_tested']} combinations tested in {saved_results['elapsed_seconds']}s")
+
+            top_saved = pd.DataFrame(saved_results['top_results'])
+
+            st.markdown("#### Top Parameter Sets (ranked by composite score)")
+            st.caption("Score combines: P&L, Profit Factor, Calmar Ratio, Win Rate, Trade Count, and Consistency")
+
+            param_cols = ['min_fvg_size', 'max_fvg_age_m15', 'rr_target', 'max_trades_per_day',
+                          'retracement_pct', 'min_risk_pts', 'max_risk_pts', 'be_trigger_rr', 'cooldown_minutes']
+            metric_cols = ['score', 'total_pnl_pts', 'total_pnl_dollars', 'profit_factor', 'win_rate',
+                           'max_drawdown_pts', 'total_trades', 'trades_per_month', 'calmar_ratio',
+                           'avg_rr_on_wins', 'max_consecutive_losses']
+
+            available_metric_cols = [c for c in metric_cols if c in top_saved.columns]
+            available_param_cols = [c for c in param_cols if c in top_saved.columns]
+
+            st.markdown("##### Performance Metrics")
+            st.dataframe(
+                top_saved[available_metric_cols].head(20).style.background_gradient(
+                    subset=['score', 'total_pnl_pts', 'profit_factor'], cmap='RdYlGn'
+                ),
+                use_container_width=True,
+                height=500,
+            )
+
+            st.markdown("##### Parameters for Each Set")
+            st.dataframe(
+                top_saved[available_param_cols].head(20),
+                use_container_width=True,
+                height=500,
+            )
+
+            if len(top_saved) > 0:
+                best = top_saved.iloc[0]
+                st.markdown("---")
+                st.markdown("#### Best Configuration Found")
+
+                bc1, bc2, bc3, bc4, bc5 = st.columns(5)
+                with bc1:
+                    st.metric("P&L (pts)", f"{best.get('total_pnl_pts', 0):+.1f}")
+                with bc2:
+                    st.metric("Profit Factor", f"{best.get('profit_factor', 0):.2f}")
+                with bc3:
+                    st.metric("Win Rate", f"{best.get('win_rate', 0)}%")
+                with bc4:
+                    st.metric("Max DD", f"{best.get('max_drawdown_pts', 0):.1f}")
+                with bc5:
+                    st.metric("Calmar", f"{best.get('calmar_ratio', 0):.2f}")
+
+                st.markdown("**Optimal Parameters:**")
+                param_display = {}
+                for p in param_cols:
+                    if p in best:
+                        param_display[p] = best[p]
+                st.json(param_display)
+
+                if st.button("Apply Best Parameters to Sidebar", key="apply_best"):
+                    st.info("Copy these values into the sidebar parameters and re-run the backtest to verify.")
+
+            if len(top_saved) >= 3:
+                st.markdown("---")
+                st.markdown("#### Parameter Sensitivity Analysis")
+
+                for param in available_param_cols:
+                    if top_saved[param].nunique() > 1:
+                        fig_sens = go.Figure()
+                        fig_sens.add_trace(go.Box(
+                            x=top_saved[param].head(20).astype(str),
+                            y=top_saved['total_pnl_pts'].head(20),
+                            name=param,
+                            marker_color='#00d4aa',
+                        ))
+                        fig_sens.update_layout(
+                            height=250,
+                            template='plotly_dark',
+                            title=f"P&L by {param} (Top 20 configs)",
+                            xaxis_title=param,
+                            yaxis_title="Total P&L (pts)",
+                            margin=dict(l=50, r=20, t=40, b=30),
+                        )
+                        st.plotly_chart(fig_sens, use_container_width=True)
+        else:
+            st.info("No optimization results found yet.")
+
+        st.markdown("---")
+        st.markdown("#### Run New Optimization")
+
+        grid_size = get_param_grid_size()
+        oc1, oc2 = st.columns(2)
+        with oc1:
+            n_combos = st.slider("Number of random combinations to test", 50, min(2000, grid_size),
+                                  min(500, grid_size), 50,
+                                  help=f"Full grid has {grid_size:,} combinations. Random sampling finds good solutions efficiently.")
+        with oc2:
+            est_time = n_combos * 0.015
+            st.metric("Estimated Time", f"~{max(1, int(est_time))} seconds")
+
+        if st.button("Start Optimization", type="primary", use_container_width=True):
+            progress_bar = st.progress(0, text="Loading data...")
+            status_text = st.empty()
+
+            raw_df = load_data(selected_files)
+            df_opt = get_active_contract(raw_df)
+
+            def update_progress(done, total, elapsed, eta, msg=None):
+                pct = done / total if total > 0 else 0
+                if msg:
+                    progress_bar.progress(pct, text=msg)
+                else:
+                    progress_bar.progress(pct, text=f"Testing {done}/{total} | Elapsed: {elapsed:.0f}s | ETA: {eta:.0f}s")
+
+            opt_result = run_optimization(
+                df_opt,
+                param_grid=PARAM_GRID,
+                fixed_params=FIXED_PARAMS,
+                top_n=30,
+                max_combos=n_combos,
+                progress_callback=update_progress,
+            )
+
+            progress_bar.progress(1.0, text="Done!")
+
+            top_results = opt_result['top_n'].head(30).to_dict('records')
+            for r in top_results:
+                for k, v in r.items():
+                    if hasattr(v, 'item'):
+                        r[k] = v.item()
+
+            with open('optimization_results.json', 'w') as f:
+                json.dump({
+                    'total_combos_tested': opt_result['total_combos'],
+                    'elapsed_seconds': opt_result['elapsed'],
+                    'top_results': top_results,
+                }, f, indent=2, default=str)
+
+            st.success(f"Optimization complete! Tested {opt_result['total_combos']} combinations in {opt_result['elapsed']}s")
+            st.rerun()
 
 else:
     st.info("Configure strategy parameters in the sidebar and click **Run Backtest** to start.")
