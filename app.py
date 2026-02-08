@@ -222,8 +222,8 @@ if 'results' in st.session_state:
     with col12:
         st.metric("Avg Daily P&L", f"{metrics['avg_daily_pnl']:+.1f} pts")
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "Equity Curve", "Trade Log", "Statistics", "Statistical Analysis", "Daily Analysis", "Economic Calendar", "Optimizer"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Equity Curve", "Trade Log", "Statistics", "Statistical Analysis", "Daily Analysis", "Economic Calendar", "Optimizer", "Strategy Guide"
     ])
 
     with tab1:
@@ -1001,6 +1001,416 @@ if 'results' in st.session_state:
 
             st.success(f"Optimization complete! Tested {opt_result['total_combos']} combinations in {opt_result['elapsed']}s")
             st.rerun()
+
+    with tab8:
+        st.subheader("Multi-TF IFVG Strategy — Guide Complet de Prise de Position")
+        st.caption("Toutes les phases, analyses et conditions requises, de la preparation pre-session jusqu'a la gestion active du trade")
+
+        config_used = st.session_state.get('config', {})
+
+        st.markdown("---")
+        st.markdown("## Phase 0 : Preparation Pre-Session")
+        st.markdown("""
+**Objectif** : Rassembler toutes les donnees de contexte AVANT l'ouverture de la killzone.
+
+**Donnees requises** :
+- Flux de prix M1 (1 minute) sur MNQ en temps reel, fuseau horaire **Eastern Time (ET)**
+- Historique OHLCV (Open, High, Low, Close, Volume) sur les **20 derniers jours de trading** (configurable)
+
+**Niveaux de structure a calculer** :
+1. **Daily Highs / Lows** : Le high et le low de chacun des 20 derniers jours
+2. **Weekly Highs / Lows** : Le high/low de chaque semaine glissante (blocs de 5 jours)
+3. **Swing Highs / Swing Lows** : Points pivots ou un high depasse les highs adjacents (jour precedent ET jour suivant) — idem pour les lows
+4. **PDH / PDL** : Les niveaux daily high/low les plus proches du prix actuel (apres tri par proximite), servant de reference immediate
+
+Seuls les niveaux situes a **moins de 500 points du prix actuel** sont retenus, tries par proximite (les 10 plus proches par categorie). PDH et PDL sont les premiers elements de ces listes triees.
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 1 : Filtres Journaliers (Pre-Killzone)")
+        st.markdown("""
+**Objectif** : Eliminer les jours a faible potentiel AVANT toute analyse.
+
+**1a. Filtre par jour de la semaine** *(optionnel)*
+- Si active : seuls les jours autorises sont trades (ex: lundi a vendredi, ou un sous-ensemble)
+- Certains jours (ex: vendredi) peuvent historiquement sous-performer
+
+**1b. Filtre de range du jour precedent** *(optionnel)*
+- Calcul : `range_veille = high_veille - low_veille`
+- Le range doit etre compris entre un minimum et un maximum (defaut: 60 a 400 points)
+- **Trop petit** (<60 pts) = marche trop calme, pas assez de volatilite pour des mouvements propres
+- **Trop grand** (>400 pts) = marche trop erratique, risque eleve de faux signaux
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 2 : Determination du Biais H1 (Horaire)")
+        st.markdown("""
+**Objectif** : Definir la direction dominante du marche AVANT la killzone. C'est le filtre directionnel principal.
+
+**Methode** :
+1. Prendre les donnees pre-killzone (tout ce qui precede 09:30 ET)
+2. Re-echantillonner en bougies H1 (1 heure)
+3. Analyser la **derniere bougie H1 completee** :
+   - Si **close > open** → Biais **ACHAT (BUY)**
+   - Si **close < open** → Biais **VENTE (SELL)**
+
+**Fallback** : Si moins de 60 minutes de donnees pre-KZ sont disponibles, utiliser la session 08:30-09:30 ET :
+- Premier open vs dernier close de cette periode
+
+**Regle absolue** : Sans biais H1 determine, **aucun trade n'est pris ce jour-la**.
+
+**Filtre additionnel — Tendance multi-jours** *(optionnel)* :
+- Analyse des N derniers jours (defaut: 3 jours)
+- Score haussier = jours haussiers + higher highs + mouvement net positif
+- Score baissier = jours baissiers + lower lows + mouvement net negatif
+- Si l'ecart entre scores est >= 2, une tendance est identifiee
+- **Le biais multi-jours doit concorder avec le biais H1**, sinon on ne trade pas
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 3 : Momentum Pre-Session *(optionnel)*")
+        st.markdown("""
+**Objectif** : Verifier que l'elan pre-killzone ne contredit pas le biais H1.
+
+**Methode** :
+1. Analyser la session 08:00-09:30 ET (pre-marche)
+2. Calculer : `momentum = (dernier_close - premier_open) / (high_max - low_min)`
+3. Le momentum est un ratio entre -1 et +1
+
+**Conditions d'exclusion** :
+- Biais **BUY** mais momentum < -0.4 (forte pression vendeuse pre-session) → **Pas de trade**
+- Biais **SELL** mais momentum > +0.4 (forte pression acheteuse pre-session) → **Pas de trade**
+
+La logique : si les institutionnels poussent fort dans la direction opposee au biais avant l'ouverture, le biais H1 est probablement invalide.
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 4 : Detection des FVG sur M15")
+        st.markdown("""
+**Objectif** : Identifier les desequilibres de prix (Fair Value Gaps) sur le timeframe 15 minutes.
+
+**Construction des bougies M15** :
+- Re-echantillonner les donnees M1 (killzone + pre-killzone) en bougies de 15 minutes
+- Minimum 4 bougies M15 requises pour l'analyse
+
+**Definition d'un FVG** (3 bougies consecutives) :
+
+**FVG Haussier (Bullish)** :
+```
+Bougie 1 (high)  ─────────
+                     GAP ↑    ← Ce GAP est le FVG
+Bougie 3 (low)   ─────────
+```
+- Condition : `low_bougie3 - high_bougie1 >= taille_minimum` (defaut: 3.0 pts)
+- La bougie du milieu (bougie 2) doit etre **haussiere** (close > open)
+- Zone du FVG : de `high_bougie1` (bottom) a `low_bougie3` (top)
+
+**FVG Baissier (Bearish)** :
+```
+Bougie 3 (high)  ─────────
+                     GAP ↓    ← Ce GAP est le FVG
+Bougie 1 (low)   ─────────
+```
+- Condition : `low_bougie1 - high_bougie3 >= taille_minimum` (defaut: 3.0 pts)
+- La bougie du milieu (bougie 2) doit etre **baissiere** (close < open)
+- Zone du FVG : de `high_bougie3` (bottom) a `low_bougie1` (top)
+
+**Proprietes enregistrees** : top, bottom, midpoint (point milieu), taille en points, timestamp
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 5 : Filtre de Displacement (Qualite du FVG)")
+        st.markdown("""
+**Objectif** : Ne garder que les FVG crees par un mouvement **impulsif et decisif** — signe d'activite institutionnelle.
+
+**Analyse de la bougie du milieu** (la bougie de displacement, bougie 2 du pattern) :
+
+**Critere 1 — Body Ratio** :
+```
+body_ratio = |close - open| / (high - low)
+```
+- Doit etre >= **55%** (defaut)
+- Signifie que le corps represente au moins 55% du range total
+- Filtre les bougies avec trop de meches (indecision)
+
+**Critere 2 — Taille minimum du body** :
+```
+body_size = |close - open|
+```
+- Doit etre >= **3.5 points** (defaut)
+- Filtre les micro-mouvements non significatifs
+
+**Les deux criteres doivent etre remplis** simultanement. Un FVG cree par une bougie a petits corps ou a grandes meches est considere comme faible et est elimine.
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 6 : Detection de l'Inversion (IFVG)")
+        st.markdown("""
+**Objectif** : Identifier le moment ou un FVG est **inverse** — c'est-a-dire que le prix traverse completement le FVG et cloture de l'autre cote. C'est le signal principal de la strategie.
+
+**Logique d'inversion** :
+
+**FVG Haussier → Signal SELL** (uniquement si biais H1 = SELL) :
+- On surveille les barres M15 suivant la creation du FVG
+- Si le **close** d'une bougie M15 descend **en dessous du bottom du FVG** → le FVG est inverse
+- Le FVG haussier est "viole" par le bas = les acheteurs ont ete pieges = signal de vente
+- **Zone de trade SELL** : du **top du FVG** (haut) au **midpoint** (milieu)
+
+**FVG Baissier → Signal BUY** (uniquement si biais H1 = BUY) :
+- Si le **close** d'une bougie M15 monte **au-dessus du top du FVG** → le FVG est inverse
+- Le FVG baissier est "viole" par le haut = les vendeurs ont ete pieges = signal d'achat
+- **Zone de trade BUY** : du **midpoint** (milieu) au **bottom du FVG** (bas)
+
+**Contrainte temporelle** : L'inversion doit se produire dans les **15 barres M15** (3h45) suivant la creation du FVG. Au-dela, le FVG est considere comme expire.
+
+**Alignement obligatoire** : L'inversion ne produit un signal que si elle est **dans la direction du biais H1**.
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 7 : Filtres Additionnels sur les IFVGs *(optionnels)*")
+        st.markdown("""
+**7a. Confluence Structurelle** :
+- Le milieu de la zone IFVG doit etre a **moins de X points** (defaut: 50 pts) d'un niveau de structure cle
+- Niveaux consideres : daily highs/lows, swing highs/lows, weekly highs/lows, PDH/PDL
+- Plus un IFVG est proche d'un niveau de structure, plus il a de probabilite de provoquer une reaction
+
+**7b. Liquidity Sweep** :
+- Avant ou au moment de l'inversion, le prix doit avoir "balaye" (sweep) un recent high ou low
+- Le lookback pour les highs/lows recents est de **20 barres M15** (configurable via `sweep_lookback_bars`)
+- Pour un signal SELL : le high des 3 barres post-inversion doit approcher le recent high (a 0.1% pres)
+- Pour un signal BUY : le low des 3 barres post-inversion doit approcher le recent low (a 0.1% pres)
+- La logique ICT : les smart money provoquent un sweep de liquidite avant de reverser
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 8 : Recherche d'Entree sur M1 (Killzone)")
+        st.markdown("""
+**Objectif** : Trouver le point d'entree precis sur le timeframe 1 minute, en attendant un retracement dans la zone IFVG.
+
+**Fenetre d'entree** :
+- **Debut** : 09:45 ET (par defaut, retarde de 15 min apres l'ouverture pour filtrer la volatilite initiale)
+- **Fin** : 11:00 ET (fin de killzone)
+- Le retracement doit se produire **APRES** l'inversion (pas avant)
+
+**Condition de retracement** (barre par barre sur M1) :
+
+**Pour un signal SELL** :
+```
+La bougie M1 doit monter jusque dans la zone IFVG :
+- high >= zone_top - (zone_range x 60%)     ← penetration d'au moins 60% de la zone
+- close < zone_top                            ← le close reste sous le haut de la zone
+```
+Le prix retrace vers le haut dans la zone de vente, mais ne la depasse pas — signe que les vendeurs reprennent le controle.
+
+**Pour un signal BUY** :
+```
+La bougie M1 doit descendre jusque dans la zone IFVG :
+- low <= zone_bottom + (zone_range x 60%)   ← penetration d'au moins 60% de la zone
+- close > zone_bottom                        ← le close reste au-dessus du bas de la zone
+```
+Le prix retrace vers le bas dans la zone d'achat, mais ne la casse pas — signe que les acheteurs reprennent le controle.
+
+**Cooldown** : Minimum **10 minutes** entre deux entrees (evite le sur-trading apres un stop).
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 9 : Confirmation M1 (Bougie de Validation)")
+        st.markdown("""
+**Objectif** : Exiger une bougie de confirmation sur M1 pour valider l'entree — ultime filtre de qualite.
+
+**Pour un signal SELL** — La bougie M1 d'entree doit etre :
+1. **Baissiere** : close < open
+2. **Corps significatif** : `|close - open| / (high - low) > 30%`
+3. **ET** au moins un de ces criteres :
+   - **Meche haute** (upper wick) > 30% de la taille du corps → rejet visible du haut
+   - **Body dominant** : corps > 50% du range total → mouvement decisif
+
+**Pour un signal BUY** — La bougie M1 d'entree doit etre :
+1. **Haussiere** : close > open
+2. **Corps significatif** : `(close - open) / (high - low) > 30%`
+3. **ET** au moins un de ces criteres :
+   - **Meche basse** (lower wick) > 30% de la taille du corps → rejet visible du bas
+   - **Body dominant** : corps > 50% du range total → mouvement decisif
+
+**Interpretation** : La bougie de confirmation montre que le prix a ete rejete dans la zone IFVG. C'est la preuve visuelle que les participants ont reagi au niveau.
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 9b : Momentum M1 *(optionnel)*")
+        st.markdown("""
+**Objectif** : Verifier que les dernieres bougies M1 montrent un elan coherent avec la direction du trade.
+
+**Methode** :
+1. Analyser les **5 dernieres bougies M1** avant l'entree (configurable via `momentum_bars`)
+2. Calculer un score :
+   - +1 pour chaque bougie dont le corps est dans le sens du trade (haussiere pour BUY, baissiere pour SELL)
+   - +1 si le mouvement net des 5 bougies est dans le sens du trade
+3. Le score doit atteindre au minimum **3** (configurable via `momentum_min_score`)
+
+**Si active** : Ce filtre s'applique **apres** la confirmation M1. Les deux doivent etre valides pour entrer.
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 10 : Execution du Trade")
+        st.markdown("""
+**Objectif** : Definir prix d'entree, stop loss, et take profit avec precision.
+
+**Prix d'entree** : **Close de la bougie M1 de confirmation**
+
+**Stop Loss** :
+| Direction | Placement du SL |
+|-----------|----------------|
+| **SELL** | `zone_top + 2.0 points` (au-dessus du haut de la zone IFVG + buffer) |
+| **BUY** | `zone_bottom - 2.0 points` (en dessous du bas de la zone IFVG + buffer) |
+
+Le buffer de 2 points evite les sorties sur simple bruit de marche (meches qui touchent exactement le niveau).
+
+**Calcul du risque** :
+```
+risk = |entry_price - stop_loss|
+```
+- Le risque doit etre entre **5.0 et 25.0 points** (defaut)
+- Si le risque est hors de cette fourchette, le trade est **annule**
+- Trop petit (<5 pts) = stop trop serre, arrete par le bruit
+- Trop grand (>25 pts) = risque disproportionne
+
+**Take Profit** :
+
+| Mode | Calcul du TP |
+|------|-------------|
+| **Fixed R:R** | `entry +/- (risk x 1.2)` (defaut R:R = 1.2) |
+| **SSL/BSL** | Niveau de liquidite le plus proche a minimum 1.5x le risque de distance |
+
+**Mode SSL/BSL (Liquidity)** :
+- SELL : cherche le swing low ou daily low le plus proche EN DESSOUS de l'entree, a au moins 1.5x risk de distance
+- BUY : cherche le swing high ou daily high le plus proche AU DESSUS de l'entree, a au moins 1.5x risk de distance
+- Si aucun niveau n'est trouve, fallback sur le Fixed R:R
+
+**Valeur du point** : $2.00 par point (specification MNQ)
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 11 : Gestion Active du Trade")
+        st.markdown("""
+**Objectif** : Proteger le capital et securiser les profits en cours de trade.
+
+**11a. Breakeven (Protection du capital)** :
+- **Declenchement** : Quand le prix bouge de **0.5R** en faveur du trade
+  - BUY : high atteint `entry + (risk x 0.5)`
+  - SELL : low atteint `entry - (risk x 0.5)`
+- **Action** : Le stop loss est deplace a `entry +/- 1 point` (breakeven + 1 pt pour couvrir les frais)
+- **Important** : Le breakeven ne s'active que si le **trailing stop n'est pas deja actif**. Si le trailing est declenche en premier, c'est lui qui gere le SL.
+- Desormais, le trade ne peut plus etre perdant (sauf gap)
+
+**11b. Trailing Stop (Securisation des profits)** :
+- **Declenchement** : Quand le prix bouge de **0.5R** en faveur (meme seuil que BE)
+- **Fonctionnement** :
+  - Le SL suit le meilleur prix atteint, a une distance de **30% du risque initial**
+  - BUY : `trailing_SL = best_high - (risk x 30%)`
+  - SELL : `trailing_SL = best_low + (risk x 30%)`
+  - Le trailing SL ne peut que se rapprocher du prix (jamais reculer)
+- **Interaction BE / Trailing** : Le trailing stop a priorite sur le breakeven. Si les deux ont le meme seuil de declenchement (0.5R), le trailing prend le relais et le BE ne s'applique plus. Le SL final est toujours le plus favorable des deux.
+
+**11c. Sortie de fin de journee (EOD)** :
+- Si ni le TP ni le SL n'est touche avant la fin de la session
+- Le trade est ferme au **dernier close disponible**
+- Resultat marque comme "EOD" (End Of Day)
+
+**Priorite de sortie** (evaluee barre par barre) :
+1. Stop Loss touche → sortie immediate
+2. Take Profit touche → sortie immediate
+3. Mise a jour trailing stop → ajustement du SL
+4. Activation breakeven → ajustement du SL
+5. Fin de journee → sortie forcee
+""")
+
+        st.markdown("---")
+        st.markdown("## Phase 12 : Limites de Position et Regles de Gestion")
+        st.markdown("""
+**Objectif** : Controler l'exposition et eviter le sur-trading.
+
+| Regle | Valeur par defaut |
+|-------|------------------|
+| Max trades par jour | **2** |
+| Cooldown entre trades | **10 minutes** |
+| Chaque IFVG utilise une seule fois | Oui |
+| Killzone | **09:30 - 11:00 ET** |
+| Entrees a partir de | **09:45 ET** |
+
+**Logique du cooldown** : Apres chaque trade (gagnant ou perdant), attendre au minimum 10 minutes avant de chercher une nouvelle entree. Empeche les entrees emotionnelles consecutives.
+
+**Utilisation unique des IFVG** : Une fois qu'un IFVG a genere un trade (gagnant ou perdant), il ne peut plus etre utilise. Cela evite de re-entrer sur une zone deja exploitee.
+""")
+
+        st.markdown("---")
+        st.markdown("## Resume Visuel : Checklist de Prise de Position")
+
+        st.markdown("""
+```
+AVANT LA SESSION (Pre-09:30 ET)
+================================
+[1] Calculer les niveaux de structure (daily/weekly/swing H/L, PDH/PDL)
+[2] Verifier filtre jour de la semaine (si active)
+[3] Verifier range du jour precedent (si active)
+[4] Determiner le biais H1 (derniere bougie horaire avant 09:30)
+[5] Verifier concordance avec tendance multi-jours (si active)
+[6] Verifier momentum pre-session 08:00-09:30 (si active)
+
+CONSTRUCTION DU SIGNAL (M15)
+================================
+[7]  Construire les bougies M15 (killzone + pre-killzone)
+[8]  Detecter tous les FVG M15 (gap >= 3.0 pts, bougie milieu directionnelle)
+[9]  Filtrer par displacement (body >= 55%, taille >= 3.5 pts)
+[10] Detecter les inversions (close au-dela du FVG, dans le sens du biais H1)
+[11] Appliquer filtres optionnels (confluence, liquidity sweep)
+
+ENTREE (M1 — a partir de 09:45 ET)
+================================
+[12] Scanner chaque bougie M1 dans la killzone
+[13] Verifier retracement dans la zone IFVG (penetration >= 60%)
+[14] Valider la bougie de confirmation M1 (corps significatif + rejet)
+[15] Calculer entry/SL/TP et verifier que le risque est entre 5-25 pts
+
+GESTION DU TRADE
+================================
+[16] Surveiller barre par barre : SL → TP → trailing → breakeven → EOD
+[17] Respecter max 2 trades/jour et cooldown 10 min
+```
+""")
+
+        st.markdown("---")
+        st.markdown("## Parametres Optimises (Configuration Actuelle)")
+        if config_used:
+            param_display = {
+                'Taille min FVG': f"{config_used.get('min_fvg_size', 3.0)} pts",
+                'Age max FVG (barres M15)': f"{config_used.get('max_fvg_age_m15', 15)}",
+                'R:R cible': f"{config_used.get('rr_target', 1.2)}",
+                'Risque max': f"{config_used.get('max_risk_pts', 25.0)} pts",
+                'Risque min': f"{config_used.get('min_risk_pts', 5.0)} pts",
+                'Max trades/jour': f"{config_used.get('max_trades_per_day', 2)}",
+                'Killzone': f"{config_used.get('killzone_start', '09:30')} - {config_used.get('killzone_end', '11:00')} ET",
+                'Debut des entrees': f"{config_used.get('entry_start_time', '09:45')} ET",
+                'Cooldown': f"{config_used.get('cooldown_minutes', 10)} min",
+                'Retracement': f"{config_used.get('retracement_pct', 60)}%",
+                'Breakeven trigger': f"{config_used.get('be_trigger_rr', 0.5)}R",
+                'Trailing trigger': f"{config_used.get('trail_trigger_rr', 0.5)}R",
+                'Trailing offset': f"{config_used.get('trail_offset_pct', 30)}%",
+                'Displacement body min': f"{config_used.get('min_displacement_body_pct', 55)}%",
+                'Displacement taille min': f"{config_used.get('min_displacement_size', 3.5)} pts",
+                'Mode target': config_used.get('target_mode', 'fixed_rr'),
+                'Valeur du point': f"${config_used.get('contract_value', 2.0):.2f}",
+            }
+            pc1, pc2 = st.columns(2)
+            items = list(param_display.items())
+            mid = len(items) // 2
+            with pc1:
+                for k, v in items[:mid]:
+                    st.markdown(f"**{k}** : `{v}`")
+            with pc2:
+                for k, v in items[mid:]:
+                    st.markdown(f"**{k}** : `{v}`")
+        else:
+            st.info("Lancez un backtest pour voir les parametres utilises.")
 
 else:
     st.info("Configure strategy parameters in the sidebar and click **Run Backtest** to start.")
