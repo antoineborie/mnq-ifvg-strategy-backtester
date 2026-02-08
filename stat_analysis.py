@@ -108,6 +108,22 @@ def _cohort_analysis(df, is_win):
     monthly_wrs = monthly['win_rate'].values
     wr_stability = round(float(np.std(monthly_wrs)), 2) if len(monthly_wrs) > 1 else 0
 
+    qualified_monthly = monthly[monthly['trades'] >= 3]
+    q_wrs = qualified_monthly['win_rate'].values if len(qualified_monthly) > 0 else np.array([])
+
+    months_below_60 = int((q_wrs < 60).sum()) if len(q_wrs) > 0 else 0
+    months_below_55 = int((q_wrs < 55).sum()) if len(q_wrs) > 0 else 0
+    months_below_50 = int((q_wrs < 50).sum()) if len(q_wrs) > 0 else 0
+    monthly_wr_floor = round(float(q_wrs.min()), 1) if len(q_wrs) > 0 else 0
+    monthly_wr_ceiling = round(float(q_wrs.max()), 1) if len(q_wrs) > 0 else 0
+    months_at_target = int((q_wrs >= 60).sum()) if len(q_wrs) > 0 else 0
+    total_qualified = len(q_wrs)
+    consistency_pct = round(months_at_target / total_qualified * 100, 1) if total_qualified > 0 else 0
+
+    neg_pnl_months = 0
+    if len(qualified_monthly) > 0:
+        neg_pnl_months = int((qualified_monthly['pnl'].values < 0).sum())
+
     return {
         'global_win_rate': global_wr,
         'total_trades': total,
@@ -117,6 +133,15 @@ def _cohort_analysis(df, is_win):
         'by_day_of_week': by_dow.to_dict('records'),
         'equity_drift': equity_drift,
         'wr_stability_std': wr_stability,
+        'months_below_60': months_below_60,
+        'months_below_55': months_below_55,
+        'months_below_50': months_below_50,
+        'monthly_wr_floor': monthly_wr_floor,
+        'monthly_wr_ceiling': monthly_wr_ceiling,
+        'months_at_target': months_at_target,
+        'total_qualified_months': total_qualified,
+        'consistency_pct': consistency_pct,
+        'negative_pnl_months': neg_pnl_months,
     }
 
 

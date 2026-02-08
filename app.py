@@ -294,6 +294,27 @@ with st.sidebar:
                                  help="Require multi-day trend to align with H1 bias")
         trend_days = st.slider("Trend Lookback Days", 2, 10, 3) if use_trend else 3
 
+    st.subheader("Volatility Regime")
+    use_vol_regime = st.checkbox("Adaptive Volatility Filter", value=False,
+                                  help="Automatically adjust parameters based on market volatility (ATR). Reduces R:R and tightens filters during low-vol periods for more consistent monthly performance.")
+    if use_vol_regime:
+        vol_atr_period = st.slider("ATR Period (days)", 5, 20, 10, 1,
+                                    help="Number of days to compute average daily range")
+        vol_low_pct = st.slider("Low Vol Percentile", 10, 40, 30, 5,
+                                 help="Below this percentile = low volatility regime")
+        vol_high_pct = st.slider("High Vol Percentile", 60, 90, 70, 5,
+                                  help="Above this percentile = high volatility regime")
+        vol_low_rr = st.slider("Low Vol R:R Target", 0.5, 1.5, 1.0, 0.1,
+                                help="Reduced R:R target during low volatility (easier to hit)")
+        vol_low_max_trades = st.selectbox("Low Vol Max Trades/Day", [1, 2], index=0,
+                                           help="Fewer trades during low vol = higher quality only")
+    else:
+        vol_atr_period = 10
+        vol_low_pct = 30
+        vol_high_pct = 70
+        vol_low_rr = 1.0
+        vol_low_max_trades = 1
+
     contract_value = st.number_input("Point Value ($)", value=2.0, step=0.5)
 
     run_button = st.button("Run Backtest", type="primary", use_container_width=True)
@@ -332,6 +353,12 @@ if run_button:
         'confluence_distance_pts': confluence_dist,
         'use_trend_filter': use_trend,
         'trend_lookback_days': trend_days,
+        'use_volatility_regime': use_vol_regime,
+        'vol_atr_period': vol_atr_period,
+        'vol_low_percentile': vol_low_pct,
+        'vol_high_percentile': vol_high_pct,
+        'vol_low_rr_target': vol_low_rr,
+        'vol_low_max_trades': vol_low_max_trades,
     }
 
     with st.spinner("Loading data..."):
@@ -671,6 +698,75 @@ if 'results' in st.session_state:
                 yaxis2=dict(title='Win Rate %', overlaying='y', side='right', **AXIS_DEFAULTS),
             )
             st.plotly_chart(fig_dow, use_container_width=True)
+
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+        st.markdown("### Monthly Consistency Analysis")
+        st.caption("Target: 60%+ win rate every month — stability is more important than peak performance")
+
+        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+        with mc1:
+            cons_pct = cohort.get('consistency_pct', 0)
+            st.metric("Months at 60%+ WR",
+                       f"{cohort.get('months_at_target', 0)}/{cohort.get('total_qualified_months', 0)}",
+                       delta=f"{cons_pct}%")
+        with mc2:
+            m60 = cohort.get('months_below_60', 0)
+            st.metric("Months Below 60%", f"{m60}",
+                       delta="OK" if m60 == 0 else f"-{m60} months",
+                       delta_color="normal" if m60 == 0 else "inverse")
+        with mc3:
+            st.metric("WR Floor", f"{cohort.get('monthly_wr_floor', 0)}%",
+                       help="Lowest monthly win rate (months with 3+ trades)")
+        with mc4:
+            st.metric("WR Ceiling", f"{cohort.get('monthly_wr_ceiling', 0)}%",
+                       help="Highest monthly win rate")
+        with mc5:
+            neg = cohort.get('negative_pnl_months', 0)
+            st.metric("Negative P&L Months", f"{neg}",
+                       delta="None" if neg == 0 else f"-{neg}",
+                       delta_color="normal" if neg == 0 else "inverse")
+
+        monthly_df_stat = pd.DataFrame(cohort['monthly'])
+        if not monthly_df_stat.empty and len(monthly_df_stat) > 1:
+            fig_cons = go.Figure()
+
+            colors_wr = []
+            for wr in monthly_df_stat['win_rate']:
+                if wr >= 60:
+                    colors_wr.append(COLORS['green'])
+                elif wr >= 50:
+                    colors_wr.append(COLORS['orange'])
+                else:
+                    colors_wr.append(COLORS['red'])
+
+            fig_cons.add_trace(go.Bar(
+                x=monthly_df_stat['year_month'], y=monthly_df_stat['win_rate'],
+                name='Monthly WR%', marker_color=colors_wr,
+                text=[f"{wr:.0f}%" for wr in monthly_df_stat['win_rate']],
+                textposition='outside', textfont=dict(size=9, color='#c9d1d9'),
+            ))
+
+            fig_cons.add_hline(y=60, line_dash="dash", line_color=COLORS['green'],
+                                annotation_text="60% Target", annotation_position="top right",
+                                annotation_font_color=COLORS['green'], line_width=2)
+
+            fig_cons.add_hline(y=50, line_dash="dot", line_color=COLORS['orange'],
+                                annotation_text="50% Breakeven", annotation_position="bottom right",
+                                annotation_font_color=COLORS['orange'], line_width=1)
+
+            fig_cons.update_layout(
+                **CHART_LAYOUT, height=340,
+                title="Monthly Win Rate — Consistency Tracker",
+                yaxis_title="Win Rate %",
+                yaxis_range=[0, max(100, monthly_df_stat['win_rate'].max() + 10)],
+            )
+            st.plotly_chart(fig_cons, use_container_width=True)
+
+            below_60_months = monthly_df_stat[monthly_df_stat['win_rate'] < 60]
+            if len(below_60_months) > 0 and len(below_60_months) <= 10:
+                st.markdown("**Months below 60% WR:**")
+                for _, row in below_60_months.iterrows():
+                    st.markdown(f"- `{row['year_month']}`: **{row['win_rate']:.1f}%** ({row['trades']} trades, {row['pnl']:+.1f} pts)")
 
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
         st.markdown("### 2. Statistical Robustness")

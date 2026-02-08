@@ -497,6 +497,8 @@ def _build_metrics(trades_list, contract_val=2.0):
             'trades_per_month': 0, 'trades_per_week': 0, 'avg_daily_pnl': 0,
             'max_consecutive_losses': 0, 'winning_days': 0,
             'total_trading_days': 0, 'calmar_ratio': 0,
+            'months_below_60': 0, 'monthly_wr_floor': 0,
+            'monthly_wr_std': 0, 'consistency_score': 0,
         }
 
     pnls = np.array([t['pnl_pts'] for t in trades_list])
@@ -552,6 +554,21 @@ def _build_metrics(trades_list, contract_val=2.0):
 
     calmar = total_pnl / abs(max_dd) if max_dd != 0 else 0
 
+    monthly_wrs = _compute_monthly_win_rates(trades_list)
+    qualified_months = [wr for wr in monthly_wrs if wr['trades'] >= 3]
+    if qualified_months:
+        wr_values = [m['win_rate'] for m in qualified_months]
+        months_below_60 = sum(1 for wr in wr_values if wr < 60)
+        monthly_wr_floor = min(wr_values)
+        monthly_wr_std = float(np.std(wr_values)) if len(wr_values) > 1 else 0
+        months_at_target = sum(1 for wr in wr_values if wr >= 60)
+        consistency_score = round(months_at_target / len(qualified_months) * 100, 1)
+    else:
+        months_below_60 = 0
+        monthly_wr_floor = 0
+        monthly_wr_std = 0
+        consistency_score = 0
+
     return {
         'total_trades': total,
         'wins': wins,
@@ -570,7 +587,32 @@ def _build_metrics(trades_list, contract_val=2.0):
         'winning_days': winning_days,
         'total_trading_days': total_days,
         'calmar_ratio': round(calmar, 2),
+        'months_below_60': months_below_60,
+        'monthly_wr_floor': round(monthly_wr_floor, 1),
+        'monthly_wr_std': round(monthly_wr_std, 1),
+        'consistency_score': round(consistency_score, 1),
     }
+
+
+def _compute_monthly_win_rates(trades_list):
+    monthly = {}
+    for t in trades_list:
+        et = t['entry_time']
+        if hasattr(et, 'strftime'):
+            ym = et.strftime('%Y-%m')
+        else:
+            ym = str(et)[:7]
+        if ym not in monthly:
+            monthly[ym] = {'wins': 0, 'total': 0}
+        monthly[ym]['total'] += 1
+        if t['result'] == 'WIN':
+            monthly[ym]['wins'] += 1
+
+    result = []
+    for ym, counts in sorted(monthly.items()):
+        wr = (counts['wins'] / counts['total'] * 100) if counts['total'] > 0 else 0
+        result.append({'month': ym, 'trades': counts['total'], 'wins': counts['wins'], 'win_rate': round(wr, 1)})
+    return result
 
 
 def _compute_score(metrics):
@@ -586,10 +628,10 @@ def _compute_score(metrics):
         return -9999
 
     score = 0
-    score += pnl * 0.2
-    score += min(pf, 5) * 40
+    score += pnl * 0.15
+    score += min(pf, 5) * 35
     calmar = pnl / dd if dd > 0 else 0
-    score += calmar * 25
+    score += calmar * 20
 
     if wr >= 60:
         score += wr * 3
@@ -612,6 +654,36 @@ def _compute_score(metrics):
         score += 20
     elif dd < 150:
         score += 10
+
+    consistency = metrics.get('consistency_score', 0)
+    months_below = metrics.get('months_below_60', 0)
+    wr_std = metrics.get('monthly_wr_std', 99)
+    wr_floor = metrics.get('monthly_wr_floor', 0)
+
+    score += consistency * 1.5
+
+    if months_below == 0:
+        score += 80
+    elif months_below <= 2:
+        score += 40
+    elif months_below <= 4:
+        score += 10
+    else:
+        score -= months_below * 10
+
+    if wr_std < 8:
+        score += 40
+    elif wr_std < 12:
+        score += 20
+    elif wr_std < 16:
+        score += 5
+
+    if wr_floor >= 60:
+        score += 50
+    elif wr_floor >= 50:
+        score += 20
+    elif wr_floor < 40:
+        score -= 20
 
     return round(score, 2)
 

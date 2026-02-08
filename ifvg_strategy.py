@@ -44,6 +44,15 @@ class IFVGStrategy:
             'use_m1_momentum': False,
             'momentum_bars': 5,
             'momentum_min_score': 3,
+            'use_volatility_regime': False,
+            'vol_atr_period': 10,
+            'vol_low_percentile': 30,
+            'vol_high_percentile': 70,
+            'vol_low_rr_target': 1.0,
+            'vol_low_min_fvg_mult': 0.8,
+            'vol_low_max_trades': 1,
+            'vol_low_min_displacement_mult': 1.2,
+            'vol_high_max_risk_mult': 0.8,
         }
         self.config = {**defaults, **(config or {})}
         self.trades = []
@@ -67,6 +76,13 @@ class IFVGStrategy:
             day_open=('open', 'first'),
             day_close=('close', 'last'),
         )
+
+        daily_ohlc['day_range'] = daily_ohlc['day_high'] - daily_ohlc['day_low']
+
+        atr_period = self.config['vol_atr_period']
+        all_ranges = daily_ohlc['day_range'].values
+        vol_low_pct = np.percentile(all_ranges, self.config['vol_low_percentile']) if len(all_ranges) > atr_period else 0
+        vol_high_pct = np.percentile(all_ranges, self.config['vol_high_percentile']) if len(all_ranges) > atr_period else 999
 
         lookback_days = self.config['structure_lookback_days']
 
@@ -96,7 +112,15 @@ class IFVGStrategy:
             else:
                 trend_bias = None
 
-            self._process_day(day_data, history_ohlc, day, df, trend_bias)
+            vol_regime = 'normal'
+            if self.config['use_volatility_regime'] and len(history_ohlc) >= atr_period:
+                recent_atr = float(history_ohlc['day_range'].tail(atr_period).mean())
+                if recent_atr <= vol_low_pct:
+                    vol_regime = 'low'
+                elif recent_atr >= vol_high_pct:
+                    vol_regime = 'high'
+
+            self._process_day(day_data, history_ohlc, day, df, trend_bias, vol_regime)
 
         return self._build_results()
 
@@ -128,9 +152,28 @@ class IFVGStrategy:
             return 'SELL'
         return None
 
-    def _process_day(self, day_data, history_ohlc, day, full_df, trend_bias):
-        ks = self.config['killzone_start']
-        ke = self.config['killzone_end']
+    def _get_regime_config(self, vol_regime):
+        cfg = dict(self.config)
+        if vol_regime == 'low':
+            cfg['rr_target'] = self.config['vol_low_rr_target']
+            cfg['min_fvg_size'] = self.config['min_fvg_size'] * self.config['vol_low_min_fvg_mult']
+            cfg['max_trades_per_day'] = self.config['vol_low_max_trades']
+            cfg['min_displacement_body_pct'] = min(
+                80, self.config['min_displacement_body_pct'] * self.config['vol_low_min_displacement_mult']
+            )
+            cfg['min_displacement_size'] = self.config['min_displacement_size'] * self.config['vol_low_min_fvg_mult']
+        elif vol_regime == 'high':
+            cfg['max_risk_pts'] = self.config['max_risk_pts'] * self.config['vol_high_max_risk_mult']
+        return cfg
+
+    def _process_day(self, day_data, history_ohlc, day, full_df, trend_bias, vol_regime='normal'):
+        if self.config['use_volatility_regime'] and vol_regime != 'normal':
+            active_cfg = self._get_regime_config(vol_regime)
+        else:
+            active_cfg = self.config
+
+        ks = active_cfg['killzone_start']
+        ke = active_cfg['killzone_end']
 
         killzone_m1 = day_data.between_time(ks, ke)
         if len(killzone_m1) < 5:
@@ -142,11 +185,11 @@ class IFVGStrategy:
         if h1_bias is None:
             return
 
-        if self.config['use_trend_filter'] and trend_bias is not None:
+        if active_cfg['use_trend_filter'] and trend_bias is not None:
             if trend_bias != h1_bias:
                 return
 
-        if self.config['use_session_momentum']:
+        if active_cfg['use_session_momentum']:
             momentum_ok = self._check_session_momentum(day_data, killzone_m1, h1_bias)
             if not momentum_ok:
                 return
@@ -161,23 +204,23 @@ class IFVGStrategy:
         if len(m15_data) < 4:
             return
 
-        m15_fvgs = self._detect_fvgs_m15(m15_data)
+        m15_fvgs = self._detect_fvgs_m15(m15_data, min_size_override=active_cfg['min_fvg_size'])
 
-        if self.config['use_displacement_filter']:
-            m15_fvgs = self._filter_by_displacement(m15_fvgs, m15_data)
+        if active_cfg['use_displacement_filter']:
+            m15_fvgs = self._filter_by_displacement(m15_fvgs, m15_data, active_cfg)
 
         m15_ifvgs = self._detect_ifvgs_m15(m15_fvgs, m15_data, h1_bias, structure)
 
-        if self.config['use_structure_confluence']:
+        if active_cfg['use_structure_confluence']:
             m15_ifvgs = self._filter_by_confluence(m15_ifvgs, structure)
 
-        if self.config['use_liquidity_sweep']:
+        if active_cfg['use_liquidity_sweep']:
             m15_ifvgs = self._filter_by_liquidity_sweep(m15_ifvgs, m15_data, killzone_m1)
 
         trades_today = 0
-        max_trades = self.config['max_trades_per_day']
+        max_trades = active_cfg['max_trades_per_day']
         last_trade_time = None
-        cooldown = self.config['cooldown_minutes']
+        cooldown = active_cfg['cooldown_minutes']
         used_ifvgs = set()
 
         kz_highs = killzone_m1['high'].values
@@ -186,7 +229,7 @@ class IFVGStrategy:
         kz_opens = killzone_m1['open'].values
         kz_times = killzone_m1.index
 
-        entry_start = self.config.get('entry_start_time', '09:30')
+        entry_start = active_cfg.get('entry_start_time', '09:30')
         entry_start_parts = entry_start.split(':')
         entry_start_minutes = int(entry_start_parts[0]) * 60 + int(entry_start_parts[1])
 
@@ -222,19 +265,20 @@ class IFVGStrategy:
 
                 entry_signal = self._check_m1_retracement(ifvg, current_bar, current_time)
                 if entry_signal:
-                    if self.config['use_m1_confirmation']:
+                    if active_cfg['use_m1_confirmation']:
                         if not self._check_m1_confirmation(current_bar, ifvg['direction']):
                             continue
 
-                    if self.config.get('use_m1_momentum', False):
+                    if active_cfg.get('use_m1_momentum', False):
                         if not self._check_m1_momentum(killzone_m1, i, ifvg['direction']):
                             continue
 
                     remaining = day_data[day_data.index > current_time]
                     trade = self._execute_trade(
-                        entry_signal, current_bar, current_time, remaining, structure
+                        entry_signal, current_bar, current_time, remaining, structure, active_cfg
                     )
                     if trade:
+                        trade['vol_regime'] = vol_regime
                         self.trades.append(trade)
                         trades_today += 1
                         last_trade_time = current_time
@@ -268,10 +312,11 @@ class IFVGStrategy:
 
         return True
 
-    def _filter_by_displacement(self, fvgs, m15_data):
+    def _filter_by_displacement(self, fvgs, m15_data, cfg_override=None):
+        cfg = cfg_override or self.config
         filtered = []
-        min_body_pct = self.config['min_displacement_body_pct'] / 100.0
-        min_disp_size = self.config['min_displacement_size']
+        min_body_pct = cfg['min_displacement_body_pct'] / 100.0
+        min_disp_size = cfg['min_displacement_size']
 
         opens = m15_data['open'].values
         closes = m15_data['close'].values
@@ -485,7 +530,7 @@ class IFVGStrategy:
         last_h1 = h1.iloc[-1]
         return 'BUY' if last_h1['close'] > last_h1['open'] else 'SELL'
 
-    def _detect_fvgs_m15(self, m15_data):
+    def _detect_fvgs_m15(self, m15_data, min_size_override=None):
         fvgs = []
         if len(m15_data) < 3:
             return fvgs
@@ -495,7 +540,7 @@ class IFVGStrategy:
         closes = m15_data['close'].values
         opens = m15_data['open'].values
         times = m15_data.index
-        min_size = self.config['min_fvg_size']
+        min_size = min_size_override if min_size_override is not None else self.config['min_fvg_size']
 
         for i in range(2, len(m15_data)):
             gap_up = lows[i] - highs[i - 2]
@@ -631,21 +676,22 @@ class IFVGStrategy:
 
         return None
 
-    def _execute_trade(self, signal, entry_bar, entry_time, future_data, structure):
+    def _execute_trade(self, signal, entry_bar, entry_time, future_data, structure, cfg_override=None):
         if future_data.empty:
             return None
 
+        cfg = cfg_override or self.config
         direction = signal['direction']
-        rr = self.config['rr_target']
-        max_risk = self.config['max_risk_pts']
-        min_risk = self.config['min_risk_pts']
-        use_be = self.config['use_be']
-        be_trigger = self.config['be_trigger_rr']
-        contract_val = self.config['contract_value']
-        target_mode = self.config['target_mode']
-        use_trail = self.config.get('use_trailing_stop', False)
-        trail_trigger = self.config.get('trail_trigger_rr', 1.0)
-        trail_offset_pct = self.config.get('trail_offset_pct', 50) / 100.0
+        rr = cfg['rr_target']
+        max_risk = cfg['max_risk_pts']
+        min_risk = cfg['min_risk_pts']
+        use_be = cfg['use_be']
+        be_trigger = cfg['be_trigger_rr']
+        contract_val = cfg['contract_value']
+        target_mode = cfg['target_mode']
+        use_trail = cfg.get('use_trailing_stop', False)
+        trail_trigger = cfg.get('trail_trigger_rr', 1.0)
+        trail_offset_pct = cfg.get('trail_offset_pct', 50) / 100.0
 
         entry_price = entry_bar['close']
 
