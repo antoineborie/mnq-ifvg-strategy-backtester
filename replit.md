@@ -53,7 +53,13 @@ The strategy uses a dictionary-based configuration pattern with sensible default
 - 5-minute cooldown between trades
 
 ### Project Status
-The project is fully implemented with a working IFVG backtest engine and interactive Streamlit dashboard. All core features are complete: data loading with pandas compatibility fix, FVG detection and inversion logic, trade simulation with BE management, equity curves, trade logs, and daily analysis.
+The project is fully implemented with a multi-timeframe IFVG backtest engine and interactive Streamlit dashboard. All core features are complete:
+- Multi-TF approach: H1 bias → M15 FVG detection → M15 inversion → M1 retracement entry
+- Market structure analysis: daily/weekly/monthly highs/lows, swing points as liquidity references
+- Economic calendar module (econ_calendar.py) with hardcoded event dates (Jan-May 2025) and impact analysis
+- Target mode selection: Fixed R:R vs SSL/BSL (liquidity level targeting)
+- Performance: 28 trades over 5 months, 35.7% WR, PF 2.64, +291 pts profit
+- Dashboard with 5 tabs: Equity Curve, Trade Log, Statistics, Daily Analysis, Economic Calendar
 
 ## External Dependencies
 
