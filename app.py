@@ -9,6 +9,7 @@ from data_loader import list_data_files, load_data, get_active_contract
 from ifvg_strategy import IFVGStrategy
 from econ_calendar import analyze_event_impact, get_event_recommendations, get_events_df, get_holidays_df
 from optimizer import run_optimization, PARAM_GRID, FIXED_PARAMS, get_param_grid_size
+from stat_analysis import perform_full_stat_analysis
 import json
 
 st.set_page_config(
@@ -221,8 +222,8 @@ if 'results' in st.session_state:
     with col12:
         st.metric("Avg Daily P&L", f"{metrics['avg_daily_pnl']:+.1f} pts")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "Equity Curve", "Trade Log", "Statistics", "Daily Analysis", "Economic Calendar", "Optimizer"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Equity Curve", "Trade Log", "Statistics", "Statistical Analysis", "Daily Analysis", "Economic Calendar", "Optimizer"
     ])
 
     with tab1:
@@ -417,6 +418,295 @@ if 'results' in st.session_state:
             st.dataframe(dir_stats, use_container_width=True)
 
     with tab4:
+        st.subheader("Advanced Statistical Analysis")
+
+        stat_results = perform_full_stat_analysis(trades_df)
+
+        cohort = stat_results['cohort']
+        robust = stat_results['robustness']
+        streaks = stat_results['streaks']
+        rr_analysis = stat_results['risk_reward']
+        vol = stat_results['volatility']
+
+        st.markdown("### 1. Temporal Cohort Analysis")
+        st.caption("Win rate segmented by year, month, and day of week to detect performance drift")
+
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            st.metric("Global Win Rate", f"{cohort['global_win_rate']}%")
+        with sc2:
+            drift = cohort['equity_drift']
+            st.metric("Equity Drift (first→last year)", f"{drift:+.1f}%",
+                       delta=f"{'Improving' if drift > 0 else 'Declining' if drift < 0 else 'Stable'}")
+        with sc3:
+            st.metric("Monthly WR Std Dev", f"{cohort['wr_stability_std']:.1f}%",
+                       help="Lower = more consistent performance across months")
+
+        yearly_df = pd.DataFrame(cohort['yearly'])
+        if not yearly_df.empty:
+            fig_yearly = make_subplots(specs=[[{"secondary_y": True}]])
+            fig_yearly.add_trace(
+                go.Bar(x=yearly_df['year'].astype(str), y=yearly_df['pnl'],
+                       name='P&L (pts)', marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in yearly_df['pnl']]),
+                secondary_y=False,
+            )
+            fig_yearly.add_trace(
+                go.Scatter(x=yearly_df['year'].astype(str), y=yearly_df['win_rate'],
+                           name='Win Rate %', mode='lines+markers',
+                           line=dict(color='#ffa502', width=3), marker=dict(size=10)),
+                secondary_y=True,
+            )
+            fig_yearly.update_layout(height=300, template='plotly_dark', title="Yearly Performance",
+                                      margin=dict(l=50, r=50, t=40, b=30))
+            fig_yearly.update_yaxes(title_text="P&L (pts)", secondary_y=False)
+            fig_yearly.update_yaxes(title_text="Win Rate %", secondary_y=True)
+            st.plotly_chart(fig_yearly, use_container_width=True)
+
+        monthly_df = pd.DataFrame(cohort['monthly'])
+        if not monthly_df.empty:
+            fig_monthly = go.Figure()
+            fig_monthly.add_trace(go.Bar(
+                x=monthly_df['year_month'], y=monthly_df['pnl'],
+                name='Monthly P&L',
+                marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in monthly_df['pnl']],
+            ))
+            fig_monthly.add_trace(go.Scatter(
+                x=monthly_df['year_month'], y=monthly_df['win_rate'],
+                name='Win Rate %', yaxis='y2', mode='lines+markers',
+                line=dict(color='#ffa502', width=2), marker=dict(size=5),
+            ))
+            fig_monthly.update_layout(
+                height=350, template='plotly_dark', title="Monthly Breakdown",
+                yaxis=dict(title='P&L (pts)'),
+                yaxis2=dict(title='Win Rate %', overlaying='y', side='right'),
+                margin=dict(l=50, r=50, t=40, b=30),
+            )
+            st.plotly_chart(fig_monthly, use_container_width=True)
+
+        dow_df = pd.DataFrame(cohort['by_day_of_week'])
+        if not dow_df.empty:
+            fig_dow = go.Figure()
+            fig_dow.add_trace(go.Bar(
+                x=dow_df['day_of_week'], y=dow_df['pnl'],
+                name='P&L', marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in dow_df['pnl']],
+            ))
+            fig_dow.add_trace(go.Scatter(
+                x=dow_df['day_of_week'], y=dow_df['win_rate'],
+                name='Win Rate %', yaxis='y2', mode='lines+markers',
+                line=dict(color='#ffa502', width=3), marker=dict(size=10),
+            ))
+            fig_dow.update_layout(
+                height=300, template='plotly_dark', title="Performance by Day of Week",
+                yaxis=dict(title='P&L (pts)'),
+                yaxis2=dict(title='Win Rate %', overlaying='y', side='right'),
+                margin=dict(l=50, r=50, t=40, b=30),
+            )
+            st.plotly_chart(fig_dow, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 2. Statistical Robustness")
+        st.caption("Profit factor, Z-Score (randomness test), expectancy, and Kelly criterion")
+
+        rb1, rb2, rb3, rb4 = st.columns(4)
+        with rb1:
+            st.metric("Profit Factor", f"{robust['profit_factor']:.3f}")
+        with rb2:
+            st.metric("Expectancy/Trade", f"{robust['expectancy_per_trade']:+.2f} pts")
+        with rb3:
+            st.metric("Avg Win", f"+{robust['avg_win']:.2f} pts")
+        with rb4:
+            st.metric("Avg Loss", f"-{robust['avg_loss']:.2f} pts")
+
+        rb5, rb6, rb7, rb8 = st.columns(4)
+        with rb5:
+            st.metric("Z-Score", f"{robust['z_score']:.3f}",
+                       help="Tests if win/loss sequences are random. |Z| > 1.96 = significant pattern")
+        with rb6:
+            st.metric("P-Value", f"{robust['z_p_value']:.4f}")
+        with rb7:
+            st.metric("Runs (obs/exp)", f"{robust['runs_count']}/{robust['expected_runs']}")
+        with rb8:
+            kelly = robust['kelly_fraction']
+            st.metric("Kelly Fraction", f"{kelly*100:.1f}%",
+                       help="Optimal fraction of capital to risk per trade")
+
+        if robust['z_interpretation']:
+            if 'Random' in robust['z_interpretation']:
+                st.success(f"Z-Score Interpretation: {robust['z_interpretation']}")
+            elif 'Clustering' in robust['z_interpretation']:
+                st.warning(f"Z-Score Interpretation: {robust['z_interpretation']}")
+            else:
+                st.info(f"Z-Score Interpretation: {robust['z_interpretation']}")
+
+        st.markdown("---")
+        st.markdown("### 3. Streak Analysis")
+        st.caption("Consecutive wins/losses and drawdown recovery")
+
+        sk1, sk2, sk3, sk4 = st.columns(4)
+        with sk1:
+            st.metric("Max Win Streak", streaks['max_win_streak'])
+        with sk2:
+            st.metric("Max Loss Streak", streaks['max_loss_streak'])
+        with sk3:
+            st.metric("Avg Win Streak", f"{streaks['avg_win_streak']:.1f}")
+        with sk4:
+            st.metric("Avg Loss Streak", f"{streaks['avg_loss_streak']:.1f}")
+
+        sk5, sk6, sk7 = st.columns(3)
+        with sk5:
+            st.metric("Max Drawdown", f"{streaks['max_drawdown_pts']:.1f} pts")
+        with sk6:
+            st.metric("DD Duration", f"{streaks['drawdown_duration_trades']} trades")
+        with sk7:
+            rec = streaks['recovery_trades']
+            st.metric("Recovery", f"{rec} trades" if rec is not None else "Not recovered")
+
+        win_dist = streaks['win_streak_distribution']
+        loss_dist = streaks['loss_streak_distribution']
+        if win_dist or loss_dist:
+            sd1, sd2 = st.columns(2)
+            with sd1:
+                if win_dist:
+                    fig_ws = go.Figure(go.Bar(
+                        x=[str(k) for k in win_dist.keys()],
+                        y=list(win_dist.values()),
+                        marker_color='#00d4aa',
+                    ))
+                    fig_ws.update_layout(height=250, template='plotly_dark',
+                                          title="Win Streak Distribution",
+                                          xaxis_title="Streak Length", yaxis_title="Count",
+                                          margin=dict(l=40, r=20, t=40, b=30))
+                    st.plotly_chart(fig_ws, use_container_width=True)
+            with sd2:
+                if loss_dist:
+                    fig_ls = go.Figure(go.Bar(
+                        x=[str(k) for k in loss_dist.keys()],
+                        y=list(loss_dist.values()),
+                        marker_color='#ff4757',
+                    ))
+                    fig_ls.update_layout(height=250, template='plotly_dark',
+                                          title="Loss Streak Distribution",
+                                          xaxis_title="Streak Length", yaxis_title="Count",
+                                          margin=dict(l=40, r=20, t=40, b=30))
+                    st.plotly_chart(fig_ls, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 4. Real Risk/Reward Analysis")
+        st.caption("Observed win rate vs breakeven win rate, and execution quality")
+
+        rr1, rr2, rr3 = st.columns(3)
+        with rr1:
+            st.metric("Real R:R Ratio", f"{rr_analysis['real_rr_ratio']:.3f}",
+                       help="Average win size / Average loss size")
+        with rr2:
+            st.metric("Breakeven Win Rate", f"{rr_analysis['breakeven_win_rate']:.1f}%",
+                       help="Minimum win rate needed to break even given your R:R")
+        with rr3:
+            edge = rr_analysis['edge_over_breakeven']
+            st.metric("Edge Over Breakeven", f"{edge:+.1f}%",
+                       delta=f"{'Positive edge' if edge > 0 else 'Negative edge'}")
+
+        rr4, rr5, rr6 = st.columns(3)
+        with rr4:
+            st.metric("Avg R:R on Wins", f"{rr_analysis['avg_rr_wins']:.3f}")
+        with rr5:
+            st.metric("Expectancy (R)", f"{rr_analysis['expectancy_r']:.3f}R",
+                       help="Expected return per trade in units of risk")
+        with rr6:
+            st.metric("Risk Consistency (Std)", f"{rr_analysis['risk_consistency_std']:.2f} pts",
+                       help="Lower = more consistent position sizing")
+
+        fig_rr = go.Figure()
+        fig_rr.add_trace(go.Indicator(
+            mode="gauge+number+delta",
+            value=rr_analysis['observed_win_rate'],
+            title={'text': "Win Rate vs Breakeven"},
+            delta={'reference': rr_analysis['breakeven_win_rate'], 'suffix': '%'},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': '#00d4aa'},
+                'steps': [
+                    {'range': [0, rr_analysis['breakeven_win_rate']], 'color': 'rgba(255,71,87,0.3)'},
+                    {'range': [rr_analysis['breakeven_win_rate'], 100], 'color': 'rgba(0,212,170,0.15)'},
+                ],
+                'threshold': {
+                    'line': {'color': '#ffa502', 'width': 4},
+                    'thickness': 0.75,
+                    'value': rr_analysis['breakeven_win_rate'],
+                },
+            },
+        ))
+        fig_rr.update_layout(height=300, template='plotly_dark', margin=dict(l=30, r=30, t=50, b=30))
+        st.plotly_chart(fig_rr, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("### 5. Performance Volatility")
+        st.caption("Sharpe, Sortino, Calmar ratios and P&L distribution properties")
+
+        vl1, vl2, vl3, vl4 = st.columns(4)
+        with vl1:
+            st.metric("Sharpe Ratio", f"{vol['sharpe_ratio']:.3f}",
+                       help="Mean P&L / Std Dev of P&L per trade")
+        with vl2:
+            st.metric("Sortino Ratio", f"{vol['sortino_ratio']:.3f}",
+                       help="Mean P&L / Downside deviation (penalizes only losses)")
+        with vl3:
+            st.metric("Calmar Ratio", f"{vol['calmar_ratio']:.3f}",
+                       help="Annualized return / Max drawdown")
+        with vl4:
+            st.metric("Daily Sharpe (ann.)", f"{vol['daily_sharpe_annualized']:.3f}")
+
+        vl5, vl6, vl7 = st.columns(3)
+        with vl5:
+            st.metric("P&L Std Dev", f"{vol['pnl_std']:.2f} pts")
+        with vl6:
+            skew = vol['pnl_skew']
+            st.metric("Skewness", f"{skew:.3f}",
+                       help="Positive = right tail (occasional big wins). Negative = left tail (occasional big losses)")
+        with vl7:
+            kurt = vol['pnl_kurtosis']
+            st.metric("Kurtosis", f"{kurt:.3f}",
+                       help="Higher = more extreme outcomes than expected. 0 = normal distribution")
+
+        monthly_rets = vol.get('monthly_returns', [])
+        if monthly_rets:
+            mr_df = pd.DataFrame(monthly_rets)
+            fig_mr = go.Figure()
+            fig_mr.add_trace(go.Bar(
+                x=mr_df['month'], y=mr_df['pnl'],
+                marker_color=['#00d4aa' if p > 0 else '#ff4757' for p in mr_df['pnl']],
+            ))
+            cum_monthly = mr_df['pnl'].cumsum()
+            fig_mr.add_trace(go.Scatter(
+                x=mr_df['month'], y=cum_monthly,
+                mode='lines', name='Cumulative',
+                line=dict(color='#ffa502', width=2),
+            ))
+            fig_mr.update_layout(
+                height=350, template='plotly_dark',
+                title="Monthly P&L Distribution",
+                xaxis_title="Month", yaxis_title="P&L (pts)",
+                margin=dict(l=50, r=20, t=40, b=30),
+            )
+            st.plotly_chart(fig_mr, use_container_width=True)
+
+            pos_months = sum(1 for r in monthly_rets if r['pnl'] > 0)
+            neg_months = sum(1 for r in monthly_rets if r['pnl'] <= 0)
+            pnl_values = [r['pnl'] for r in monthly_rets]
+            best_month = max(monthly_rets, key=lambda r: r['pnl'])
+            worst_month = min(monthly_rets, key=lambda r: r['pnl'])
+
+            vm1, vm2, vm3, vm4 = st.columns(4)
+            with vm1:
+                st.metric("Positive Months", f"{pos_months}/{len(monthly_rets)}")
+            with vm2:
+                st.metric("Avg Monthly P&L", f"{np.mean(pnl_values):+.1f} pts")
+            with vm3:
+                st.metric("Best Month", f"{best_month['month']}: {best_month['pnl']:+.1f}")
+            with vm4:
+                st.metric("Worst Month", f"{worst_month['month']}: {worst_month['pnl']:+.1f}")
+
+    with tab5:
         st.subheader("Daily Performance Breakdown")
 
         daily = trades_df.groupby('trade_date').agg(
@@ -474,7 +764,7 @@ if 'results' in st.session_state:
 
         st.dataframe(daily, use_container_width=True)
 
-    with tab5:
+    with tab6:
         st.subheader("Economic Calendar Impact Analysis")
         st.caption("How does the strategy perform on CPI, PPI, NFP days vs normal days?")
 
@@ -561,7 +851,7 @@ if 'results' in st.session_state:
                 st.markdown("##### US Market Holidays")
                 st.dataframe(holidays_df, use_container_width=True)
 
-    with tab6:
+    with tab7:
         st.subheader("Parameter Optimizer")
         st.caption("Find the best strategy parameters by testing hundreds of combinations on your data")
 
