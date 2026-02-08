@@ -6,15 +6,20 @@ from ifvg_strategy import IFVGStrategy
 
 
 PARAM_GRID = {
-    'min_fvg_size': [2.0, 3.0, 4.0, 6.0, 8.0],
-    'max_fvg_age_m15': [6, 10, 14, 20],
-    'rr_target': [2.0, 2.5, 3.0, 4.0],
-    'max_trades_per_day': [1, 2, 3],
-    'retracement_pct': [30, 50, 70],
-    'min_risk_pts': [3.0, 5.0],
-    'max_risk_pts': [30.0, 50.0],
-    'be_trigger_rr': [1.0, 1.5, 2.0],
-    'cooldown_minutes': [5, 10],
+    'min_fvg_size': [3.0, 4.0, 5.0],
+    'max_fvg_age_m15': [12, 15, 20],
+    'rr_target': [1.0, 1.2, 1.5],
+    'max_trades_per_day': [1, 2],
+    'retracement_pct': [50, 60],
+    'min_risk_pts': [5.0],
+    'max_risk_pts': [25.0, 35.0],
+    'be_trigger_rr': [0.5, 0.6],
+    'trail_trigger_rr': [0.5, 0.6],
+    'trail_offset_pct': [25, 30, 40],
+    'min_displacement_body_pct': [50, 55],
+    'min_displacement_size': [3.0, 3.5],
+    'entry_start_time': ['09:45', '09:50'],
+    'cooldown_minutes': [10],
 }
 
 FIXED_PARAMS = {
@@ -24,18 +29,33 @@ FIXED_PARAMS = {
     'contract_value': 2.0,
     'target_mode': 'fixed_rr',
     'structure_lookback_days': 20,
+    'use_trailing_stop': True,
+    'use_displacement_filter': True,
+    'use_m1_confirmation': True,
+    'use_liquidity_sweep': False,
+    'use_structure_confluence': False,
+    'use_session_momentum': False,
+    'use_trend_filter': False,
+    'use_range_filter': False,
+    'use_m1_momentum': False,
+    'use_day_filter': False,
 }
 
 QUICK_PARAM_GRID = {
-    'min_fvg_size': [3.0, 4.0, 6.0],
-    'max_fvg_age_m15': [8, 12, 18],
-    'rr_target': [2.0, 3.0, 4.0],
+    'min_fvg_size': [3.0, 4.0],
+    'max_fvg_age_m15': [15],
+    'rr_target': [1.0, 1.2, 1.5],
     'max_trades_per_day': [1, 2],
-    'retracement_pct': [40, 50, 60],
-    'min_risk_pts': [3.0, 5.0],
-    'max_risk_pts': [30.0, 50.0],
-    'be_trigger_rr': [1.0, 1.5],
-    'cooldown_minutes': [5, 10],
+    'retracement_pct': [50, 60],
+    'min_risk_pts': [5.0],
+    'max_risk_pts': [25.0],
+    'be_trigger_rr': [0.5],
+    'trail_trigger_rr': [0.5],
+    'trail_offset_pct': [30],
+    'min_displacement_body_pct': [50, 55],
+    'min_displacement_size': [3.0, 3.5],
+    'entry_start_time': ['09:45'],
+    'cooldown_minutes': [10],
 }
 
 
@@ -53,6 +73,8 @@ def _precompute_days(df_utc):
     daily_ohlc = df.groupby('_date').agg(
         day_high=('high', 'max'),
         day_low=('low', 'min'),
+        day_open=('open', 'first'),
+        day_close=('close', 'last'),
     )
 
     precomputed = []
@@ -95,7 +117,27 @@ def _precompute_days(df_utc):
         kz_highs = killzone_m1['high'].values
         kz_lows = killzone_m1['low'].values
         kz_closes = killzone_m1['close'].values
+        kz_opens = killzone_m1['open'].values
         kz_times = killzone_m1.index
+
+        kz_body = kz_closes - kz_opens
+        kz_range = kz_highs - kz_lows
+        kz_range_safe = np.where(kz_range == 0, 1, kz_range)
+        kz_body_pct = np.abs(kz_body) / kz_range_safe
+
+        sell_confirm = (kz_body < 0) & (np.abs(kz_body) / kz_range_safe > 0.3)
+        sell_confirm_strong = sell_confirm & (
+            (np.abs(kz_body) / kz_range_safe > 0.5) |
+            ((kz_highs - np.maximum(kz_opens, kz_closes)) > np.abs(kz_body) * 0.3)
+        )
+
+        buy_confirm = (kz_body > 0) & (kz_body / kz_range_safe > 0.3)
+        buy_confirm_strong = buy_confirm & (
+            (kz_body / kz_range_safe > 0.5) |
+            ((np.minimum(kz_opens, kz_closes) - kz_lows) > kz_body * 0.3)
+        )
+
+        kz_minutes = np.array([t.hour * 60 + t.minute for t in kz_times])
 
         remaining_data = day_data[day_data.index > killzone_m1.index[0]]
         rem_highs = remaining_data['high'].values
@@ -115,12 +157,15 @@ def _precompute_days(df_utc):
             'kz_highs': kz_highs,
             'kz_lows': kz_lows,
             'kz_closes': kz_closes,
+            'kz_opens': kz_opens,
             'kz_times': kz_times,
+            'kz_minutes': kz_minutes,
+            'sell_confirm': sell_confirm_strong,
+            'buy_confirm': buy_confirm_strong,
             'rem_highs': rem_highs,
             'rem_lows': rem_lows,
             'rem_closes': rem_closes,
             'rem_times': rem_times,
-            'day_data': day_data,
         })
 
     return precomputed
@@ -202,6 +247,19 @@ def _run_fast_backtest(precomputed_days, config):
     cooldown = config['cooldown_minutes']
     contract_val = config.get('contract_value', 2.0)
     target_mode = config.get('target_mode', 'fixed_rr')
+    use_trail = config.get('use_trailing_stop', True)
+    trail_trigger = config.get('trail_trigger_rr', 0.5)
+    trail_offset_pct = config.get('trail_offset_pct', 30) / 100.0
+
+    use_disp = config.get('use_displacement_filter', True)
+    min_disp_body = config.get('min_displacement_body_pct', 55) / 100.0
+    min_disp_size = config.get('min_displacement_size', 3.5)
+
+    use_confirm = config.get('use_m1_confirmation', True)
+
+    entry_start = config.get('entry_start_time', '09:45')
+    est_parts = entry_start.split(':')
+    entry_start_minutes = int(est_parts[0]) * 60 + int(est_parts[1])
 
     for pd_day in precomputed_days:
         h1_bias = pd_day['h1_bias']
@@ -216,11 +274,21 @@ def _run_fast_backtest(precomputed_days, config):
         for i in range(2, len(m15_h)):
             gap_up = m15_l[i] - m15_h[i-2]
             if gap_up >= min_fvg and (m15_c[i-1] - m15_o[i-1]) > 0:
+                mid_body = abs(m15_c[i-1] - m15_o[i-1])
+                mid_range = m15_h[i-1] - m15_l[i-1]
+                if use_disp and mid_range > 0:
+                    if mid_body / mid_range < min_disp_body or mid_body < min_disp_size:
+                        continue
                 fvgs.append(('bullish', float(m15_l[i]), float(m15_h[i-2]),
                              float((m15_l[i] + m15_h[i-2]) / 2), float(gap_up), m15_t[i], i))
 
             gap_down = m15_l[i-2] - m15_h[i]
             if gap_down >= min_fvg and (m15_c[i-1] - m15_o[i-1]) < 0:
+                mid_body = abs(m15_c[i-1] - m15_o[i-1])
+                mid_range = m15_h[i-1] - m15_l[i-1]
+                if use_disp and mid_range > 0:
+                    if mid_body / mid_range < min_disp_body or mid_body < min_disp_size:
+                        continue
                 fvgs.append(('bearish', float(m15_l[i-2]), float(m15_h[i]),
                              float((m15_l[i-2] + m15_h[i]) / 2), float(gap_down), m15_t[i], i))
 
@@ -248,7 +316,11 @@ def _run_fast_backtest(precomputed_days, config):
         kz_h = pd_day['kz_highs']
         kz_l = pd_day['kz_lows']
         kz_c = pd_day['kz_closes']
+        kz_o = pd_day['kz_opens']
         kz_t = pd_day['kz_times']
+        kz_min = pd_day['kz_minutes']
+        sell_conf = pd_day['sell_confirm']
+        buy_conf = pd_day['buy_confirm']
 
         trades_today = 0
         last_trade_time = None
@@ -258,7 +330,11 @@ def _run_fast_backtest(precomputed_days, config):
             if trades_today >= max_trades:
                 break
 
+            if kz_min[i] < entry_start_minutes:
+                continue
+
             ct = kz_t[i]
+
             if last_trade_time is not None:
                 if (ct - last_trade_time).total_seconds() / 60 < cooldown:
                     continue
@@ -281,6 +357,9 @@ def _run_fast_backtest(precomputed_days, config):
                 if direction == 'SELL':
                     entry_bot = ztop - (zone_range * ret_pct)
                     if kz_h[i] >= entry_bot and kz_c[i] < ztop:
+                        if use_confirm and not sell_conf[i]:
+                            continue
+
                         entry_price = kz_c[i]
                         sl_price = ztop + 2.0
                         risk = sl_price - entry_price
@@ -292,6 +371,9 @@ def _run_fast_backtest(precomputed_days, config):
                 else:
                     adj_top = zbot + (zone_range * ret_pct)
                     if kz_l[i] <= adj_top and kz_c[i] > zbot:
+                        if use_confirm and not buy_conf[i]:
+                            continue
+
                         entry_price = kz_c[i]
                         sl_price = zbot - 2.0
                         risk = entry_price - sl_price
@@ -315,7 +397,7 @@ def _run_fast_backtest(precomputed_days, config):
                 result_label, exit_price, exit_time, pnl_pts = _sim_trade_fast(
                     rem_h, rem_l, rem_c, rem_t, start_j,
                     entry_price, tp_price, sl_price, direction, risk,
-                    use_be, be_trigger
+                    use_be, be_trigger, use_trail, trail_trigger, trail_offset_pct
                 )
 
                 trades.append({
@@ -343,32 +425,59 @@ def _run_fast_backtest(precomputed_days, config):
     return trades
 
 
-def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction, risk, use_be, be_trigger):
+def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction, risk,
+                    use_be, be_trigger, use_trail=True, trail_trigger=0.5, trail_offset_pct=0.3):
     current_sl = sl
     be_activated = False
+    trail_activated = False
+    best_price = entry
+
     be_level = entry + (risk * be_trigger) if direction == 'BUY' else entry - (risk * be_trigger)
+    trail_level = entry + (risk * trail_trigger) if direction == 'BUY' else entry - (risk * trail_trigger)
 
     for i in range(start, len(highs)):
         h, l, c = highs[i], lows[i], closes[i]
 
         if direction == 'BUY':
+            if h > best_price:
+                best_price = h
+
             if l <= current_sl:
                 pnl = current_sl - entry
                 label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
                 return label, current_sl, times[i], pnl
             if h >= tp:
                 return 'WIN', tp, times[i], tp - entry
-            if use_be and not be_activated and h >= be_level:
+
+            if use_trail and h >= trail_level:
+                trail_activated = True
+            if trail_activated:
+                trail_sl = best_price - (risk * trail_offset_pct)
+                if trail_sl > current_sl:
+                    current_sl = trail_sl
+
+            if use_be and not be_activated and not trail_activated and h >= be_level:
                 current_sl = entry + 1.0
                 be_activated = True
         else:
+            if l < best_price:
+                best_price = l
+
             if h >= current_sl:
                 pnl = entry - current_sl
                 label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
                 return label, current_sl, times[i], pnl
             if l <= tp:
                 return 'WIN', tp, times[i], entry - tp
-            if use_be and not be_activated and l <= be_level:
+
+            if use_trail and l <= trail_level:
+                trail_activated = True
+            if trail_activated:
+                trail_sl = best_price + (risk * trail_offset_pct)
+                if trail_sl < current_sl:
+                    current_sl = trail_sl
+
+            if use_be and not be_activated and not trail_activated and l <= be_level:
                 current_sl = entry - 1.0
                 be_activated = True
 
@@ -385,7 +494,7 @@ def _build_metrics(trades_list, contract_val=2.0):
             'total_trades': 0, 'wins': 0, 'losses': 0, 'breakevens': 0,
             'win_rate': 0, 'total_pnl_pts': 0, 'total_pnl_dollars': 0,
             'profit_factor': 0, 'max_drawdown_pts': 0, 'avg_rr_on_wins': 0,
-            'trades_per_month': 0, 'avg_daily_pnl': 0,
+            'trades_per_month': 0, 'trades_per_week': 0, 'avg_daily_pnl': 0,
             'max_consecutive_losses': 0, 'winning_days': 0,
             'total_trading_days': 0, 'calmar_ratio': 0,
         }
@@ -425,6 +534,13 @@ def _build_metrics(trades_list, contract_val=2.0):
     avg_daily = np.mean(list(daily_pnl.values())) if daily_pnl else 0
     trades_per_month = total / max(total_days / 21, 1)
 
+    sorted_dates = sorted(dates)
+    if len(sorted_dates) >= 2:
+        total_weeks = max(1, (sorted_dates[-1] - sorted_dates[0]).days / 7)
+        trades_per_week = total / total_weeks
+    else:
+        trades_per_week = 0
+
     max_cons_losses = 0
     current_streak = 0
     for p in pnls:
@@ -446,9 +562,10 @@ def _build_metrics(trades_list, contract_val=2.0):
         'total_pnl_dollars': round(total_pnl * contract_val, 2),
         'profit_factor': round(pf, 2),
         'max_drawdown_pts': round(max_dd, 2),
-        'avg_rr_on_wins': round(avg_rr, 2),
+        'avg_rr_on_wins': round(float(avg_rr), 2),
         'trades_per_month': round(trades_per_month, 1),
-        'avg_daily_pnl': round(avg_daily, 2),
+        'trades_per_week': round(trades_per_week, 2),
+        'avg_daily_pnl': round(float(avg_daily), 2),
         'max_consecutive_losses': max_cons_losses,
         'winning_days': winning_days,
         'total_trading_days': total_days,
@@ -462,20 +579,39 @@ def _compute_score(metrics):
     dd = abs(metrics['max_drawdown_pts']) if metrics['max_drawdown_pts'] != 0 else 1
     trades = metrics['total_trades']
     wr = metrics['win_rate']
+    tpw = metrics.get('trades_per_week', 0)
+    max_loss_streak = metrics['max_consecutive_losses']
 
     if trades < 20:
         return -9999
 
     score = 0
-    score += pnl * 0.3
-    score += min(pf, 5) * 50
+    score += pnl * 0.2
+    score += min(pf, 5) * 40
     calmar = pnl / dd if dd > 0 else 0
-    score += calmar * 30
-    score += wr * 1.5
-    if trades >= 50:
-        score += 20
-    if metrics['max_consecutive_losses'] <= 5:
+    score += calmar * 25
+
+    if wr >= 60:
+        score += wr * 3
+    elif wr >= 55:
+        score += wr * 2
+    else:
+        score += wr * 1
+
+    if 2.0 <= tpw <= 3.5:
+        score += 50
+    elif 1.5 <= tpw <= 4.5:
+        score += 25
+
+    if max_loss_streak <= 3:
+        score += 30
+    elif max_loss_streak <= 5:
         score += 15
+
+    if dd < 100:
+        score += 20
+    elif dd < 150:
+        score += 10
 
     return round(score, 2)
 

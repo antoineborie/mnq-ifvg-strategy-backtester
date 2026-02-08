@@ -42,24 +42,30 @@ Preferred communication style: Simple, everyday language.
 - **No database**: The project uses flat file storage only. There is no SQL database or ORM involved.
 
 ### Strategy Configuration
-The strategy uses a dictionary-based configuration pattern with sensible defaults:
+The strategy uses a dictionary-based configuration pattern with optimized defaults:
 - `min_fvg_size`: 4.0 points minimum gap size
-- `max_fvg_age`: 30 bars maximum gap age
-- `rr_target`: 2.5 risk-to-reward ratio
-- `max_risk_pts` / `min_risk_pts`: 50.0 / 5.0 points risk bounds
-- `max_trades_per_day`: 3
+- `max_fvg_age_m15`: 15 bars maximum gap age
+- `rr_target`: 1.2 risk-to-reward ratio
+- `max_risk_pts` / `min_risk_pts`: 25.0 / 5.0 points risk bounds
+- `max_trades_per_day`: 2
 - `contract_value`: $2.00 per point (MNQ specification)
-- Break-even trigger at 1.5 RR
-- 5-minute cooldown between trades
+- Break-even trigger at 0.5 RR
+- Trailing stop: trigger at 0.5R, 30% offset
+- Displacement filter: 55% body ratio, 3.5 pts minimum
+- M1 confirmation candle required
+- Entry start time: 09:45 (delayed from 09:30 for higher WR)
+- 10-minute cooldown between trades
 
 ### Project Status
 The project is fully implemented with a multi-timeframe IFVG backtest engine and interactive Streamlit dashboard. All core features are complete:
 - Multi-TF approach: H1 bias → M15 FVG detection → M15 inversion → M1 retracement entry
+- Quality filters: M1 confirmation candles, displacement analysis, trailing stops, delayed entry timing
 - Market structure analysis: daily/weekly/monthly highs/lows, swing points as liquidity references
 - Economic calendar module (econ_calendar.py) with hardcoded event dates (Jan-May 2025) and impact analysis
 - Target mode selection: Fixed R:R vs SSL/BSL (liquidity level targeting)
-- Performance: 28 trades over 5 months, 35.7% WR, PF 2.64, +291 pts profit
-- Dashboard with 5 tabs: Equity Curve, Trade Log, Statistics, Daily Analysis, Economic Calendar
+- Performance (3yr backtest): ~65.8% WR, 2.5 trades/week, PF 1.67, +1065 pts, max 4 consecutive losses
+- Dashboard with 6 tabs: Equity Curve, Trade Log, Statistics, Daily Analysis, Economic Calendar, Optimizer
+- Optimizer uses pre-computed confirmation masks for speed (~0.6s/combo)
 
 ## External Dependencies
 

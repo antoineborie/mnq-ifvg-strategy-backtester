@@ -5,21 +5,45 @@ import numpy as np
 class IFVGStrategy:
     def __init__(self, config=None):
         defaults = {
-            'min_fvg_size': 4.0,
-            'max_fvg_age_m15': 12,
-            'rr_target': 3.0,
-            'max_risk_pts': 50.0,
+            'min_fvg_size': 3.0,
+            'max_fvg_age_m15': 15,
+            'rr_target': 1.2,
+            'max_risk_pts': 25.0,
             'min_risk_pts': 5.0,
             'max_trades_per_day': 2,
             'killzone_start': '09:30',
             'killzone_end': '11:00',
             'use_be': True,
-            'be_trigger_rr': 1.5,
+            'be_trigger_rr': 0.5,
             'cooldown_minutes': 10,
             'contract_value': 2.0,
             'target_mode': 'fixed_rr',
-            'retracement_pct': 50,
+            'retracement_pct': 60,
             'structure_lookback_days': 20,
+            'use_displacement_filter': True,
+            'min_displacement_body_pct': 55,
+            'min_displacement_size': 3.5,
+            'use_liquidity_sweep': False,
+            'sweep_lookback_bars': 20,
+            'use_m1_confirmation': True,
+            'use_structure_confluence': False,
+            'confluence_distance_pts': 50.0,
+            'use_trend_filter': False,
+            'trend_lookback_days': 3,
+            'use_day_filter': False,
+            'allowed_days': [0, 1, 2, 3, 4],
+            'use_session_momentum': False,
+            'momentum_threshold': 0.4,
+            'use_range_filter': False,
+            'min_prev_day_range': 60.0,
+            'max_prev_day_range': 400.0,
+            'use_trailing_stop': True,
+            'trail_trigger_rr': 0.5,
+            'trail_offset_pct': 30,
+            'entry_start_time': '09:45',
+            'use_m1_momentum': False,
+            'momentum_bars': 5,
+            'momentum_min_score': 3,
         }
         self.config = {**defaults, **(config or {})}
         self.trades = []
@@ -40,6 +64,8 @@ class IFVGStrategy:
         daily_ohlc = df.groupby('_date').agg(
             day_high=('high', 'max'),
             day_low=('low', 'min'),
+            day_open=('open', 'first'),
+            day_close=('close', 'last'),
         )
 
         lookback_days = self.config['structure_lookback_days']
@@ -49,15 +75,60 @@ class IFVGStrategy:
             if len(day_data) < 30:
                 continue
 
+            if self.config['use_day_filter']:
+                import datetime
+                weekday = day.weekday() if hasattr(day, 'weekday') else datetime.date(day.year, day.month, day.day).weekday()
+                if weekday not in self.config['allowed_days']:
+                    continue
+
             start_idx = max(0, i - lookback_days)
             history_days = trading_days[start_idx:i]
             history_ohlc = daily_ohlc.loc[daily_ohlc.index.isin(history_days)] if history_days else pd.DataFrame()
 
-            self._process_day(day_data, history_ohlc, day, df)
+            if self.config['use_range_filter'] and len(history_ohlc) > 0:
+                prev_day = history_ohlc.iloc[-1]
+                prev_range = prev_day['day_high'] - prev_day['day_low']
+                if prev_range < self.config['min_prev_day_range'] or prev_range > self.config['max_prev_day_range']:
+                    continue
+
+            if self.config['use_trend_filter'] and len(history_ohlc) >= self.config['trend_lookback_days']:
+                trend_bias = self._get_multi_day_trend(history_ohlc)
+            else:
+                trend_bias = None
+
+            self._process_day(day_data, history_ohlc, day, df, trend_bias)
 
         return self._build_results()
 
-    def _process_day(self, day_data, history_ohlc, day, full_df):
+    def _get_multi_day_trend(self, history_ohlc):
+        n = self.config['trend_lookback_days']
+        recent = history_ohlc.tail(n)
+        if len(recent) < 2:
+            return None
+
+        closes = recent['day_close'].values
+        opens = recent['day_open'].values
+        highs = recent['day_high'].values
+        lows = recent['day_low'].values
+
+        bullish_days = sum(1 for i in range(len(closes)) if closes[i] > opens[i])
+        bearish_days = sum(1 for i in range(len(closes)) if closes[i] < opens[i])
+
+        higher_highs = sum(1 for i in range(1, len(highs)) if highs[i] > highs[i-1])
+        lower_lows = sum(1 for i in range(1, len(lows)) if lows[i] < lows[i-1])
+
+        overall_move = closes[-1] - opens[0]
+
+        bull_score = bullish_days + higher_highs + (1 if overall_move > 0 else 0)
+        bear_score = bearish_days + lower_lows + (1 if overall_move < 0 else 0)
+
+        if bull_score >= bear_score + 2:
+            return 'BUY'
+        elif bear_score >= bull_score + 2:
+            return 'SELL'
+        return None
+
+    def _process_day(self, day_data, history_ohlc, day, full_df, trend_bias):
         ks = self.config['killzone_start']
         ke = self.config['killzone_end']
 
@@ -71,6 +142,15 @@ class IFVGStrategy:
         if h1_bias is None:
             return
 
+        if self.config['use_trend_filter'] and trend_bias is not None:
+            if trend_bias != h1_bias:
+                return
+
+        if self.config['use_session_momentum']:
+            momentum_ok = self._check_session_momentum(day_data, killzone_m1, h1_bias)
+            if not momentum_ok:
+                return
+
         pre_kz = day_data[day_data.index < killzone_m1.index[0]]
         kz_and_before = pd.concat([pre_kz, killzone_m1]).sort_index()
 
@@ -82,7 +162,17 @@ class IFVGStrategy:
             return
 
         m15_fvgs = self._detect_fvgs_m15(m15_data)
+
+        if self.config['use_displacement_filter']:
+            m15_fvgs = self._filter_by_displacement(m15_fvgs, m15_data)
+
         m15_ifvgs = self._detect_ifvgs_m15(m15_fvgs, m15_data, h1_bias, structure)
+
+        if self.config['use_structure_confluence']:
+            m15_ifvgs = self._filter_by_confluence(m15_ifvgs, structure)
+
+        if self.config['use_liquidity_sweep']:
+            m15_ifvgs = self._filter_by_liquidity_sweep(m15_ifvgs, m15_data, killzone_m1)
 
         trades_today = 0
         max_trades = self.config['max_trades_per_day']
@@ -93,13 +183,22 @@ class IFVGStrategy:
         kz_highs = killzone_m1['high'].values
         kz_lows = killzone_m1['low'].values
         kz_closes = killzone_m1['close'].values
+        kz_opens = killzone_m1['open'].values
         kz_times = killzone_m1.index
+
+        entry_start = self.config.get('entry_start_time', '09:30')
+        entry_start_parts = entry_start.split(':')
+        entry_start_minutes = int(entry_start_parts[0]) * 60 + int(entry_start_parts[1])
 
         for i in range(len(killzone_m1)):
             if trades_today >= max_trades:
                 break
 
             current_time = kz_times[i]
+
+            current_minutes = current_time.hour * 60 + current_time.minute
+            if current_minutes < entry_start_minutes:
+                continue
 
             if last_trade_time is not None:
                 minutes_since = (current_time - last_trade_time).total_seconds() / 60
@@ -110,6 +209,7 @@ class IFVGStrategy:
                 'high': kz_highs[i],
                 'low': kz_lows[i],
                 'close': kz_closes[i],
+                'open': kz_opens[i],
             }
 
             for ifvg in m15_ifvgs:
@@ -122,6 +222,14 @@ class IFVGStrategy:
 
                 entry_signal = self._check_m1_retracement(ifvg, current_bar, current_time)
                 if entry_signal:
+                    if self.config['use_m1_confirmation']:
+                        if not self._check_m1_confirmation(current_bar, ifvg['direction']):
+                            continue
+
+                    if self.config.get('use_m1_momentum', False):
+                        if not self._check_m1_momentum(killzone_m1, i, ifvg['direction']):
+                            continue
+
                     remaining = day_data[day_data.index > current_time]
                     trade = self._execute_trade(
                         entry_signal, current_bar, current_time, remaining, structure
@@ -132,6 +240,178 @@ class IFVGStrategy:
                         last_trade_time = current_time
                         used_ifvgs.add(ifvg['id'])
                         break
+
+    def _check_session_momentum(self, day_data, killzone, h1_bias):
+        kz_start = killzone.index[0]
+        pre_session = day_data.between_time('08:00', '09:30')
+        if len(pre_session) < 10:
+            return True
+
+        opens = pre_session['open'].values
+        closes = pre_session['close'].values
+        highs = pre_session['high'].values
+        lows = pre_session['low'].values
+
+        session_range = highs.max() - lows.min()
+        if session_range == 0:
+            return True
+
+        net_move = closes[-1] - opens[0]
+        momentum = net_move / session_range
+
+        threshold = self.config['momentum_threshold']
+
+        if h1_bias == 'BUY' and momentum < -threshold:
+            return False
+        if h1_bias == 'SELL' and momentum > threshold:
+            return False
+
+        return True
+
+    def _filter_by_displacement(self, fvgs, m15_data):
+        filtered = []
+        min_body_pct = self.config['min_displacement_body_pct'] / 100.0
+        min_disp_size = self.config['min_displacement_size']
+
+        opens = m15_data['open'].values
+        closes = m15_data['close'].values
+        highs = m15_data['high'].values
+        lows = m15_data['low'].values
+
+        for fvg in fvgs:
+            idx_str = fvg['id'].split('_')
+            try:
+                bar_idx = int(idx_str[2])
+            except (IndexError, ValueError):
+                filtered.append(fvg)
+                continue
+
+            if bar_idx - 1 < 0 or bar_idx - 1 >= len(opens):
+                filtered.append(fvg)
+                continue
+
+            mid_idx = bar_idx - 1
+            body = abs(closes[mid_idx] - opens[mid_idx])
+            total_range = highs[mid_idx] - lows[mid_idx]
+
+            if total_range == 0:
+                continue
+
+            body_pct = body / total_range
+
+            if body_pct >= min_body_pct and body >= min_disp_size:
+                filtered.append(fvg)
+
+        return filtered
+
+    def _check_m1_momentum(self, killzone_m1, current_idx, direction):
+        n_bars = self.config.get('momentum_bars', 5)
+        min_score = self.config.get('momentum_min_score', 3)
+
+        start_idx = max(0, current_idx - n_bars)
+        if start_idx == current_idx:
+            return True
+
+        closes = killzone_m1['close'].values[start_idx:current_idx]
+        opens = killzone_m1['open'].values[start_idx:current_idx]
+
+        if len(closes) < 2:
+            return True
+
+        score = 0
+        for j in range(len(closes)):
+            if direction == 'SELL' and closes[j] < opens[j]:
+                score += 1
+            elif direction == 'BUY' and closes[j] > opens[j]:
+                score += 1
+
+        net_move = closes[-1] - closes[0]
+        if direction == 'SELL' and net_move < 0:
+            score += 1
+        elif direction == 'BUY' and net_move > 0:
+            score += 1
+
+        return score >= min_score
+
+    def _filter_by_confluence(self, ifvgs, structure):
+        filtered = []
+        max_dist = self.config['confluence_distance_pts']
+
+        all_levels = []
+        for key in ['daily_highs', 'daily_lows', 'swing_highs', 'swing_lows', 'weekly_highs', 'weekly_lows']:
+            all_levels.extend(structure.get(key, []))
+
+        if structure.get('pdh'):
+            all_levels.append(structure['pdh'])
+        if structure.get('pdl'):
+            all_levels.append(structure['pdl'])
+
+        if not all_levels:
+            return ifvgs
+
+        for ifvg in ifvgs:
+            zone_mid = (ifvg['zone_top'] + ifvg['zone_bottom']) / 2
+
+            near_level = any(abs(zone_mid - lvl) <= max_dist for lvl in all_levels)
+            if near_level:
+                filtered.append(ifvg)
+
+        return filtered if filtered else ifvgs[:1]
+
+    def _filter_by_liquidity_sweep(self, ifvgs, m15_data, killzone):
+        filtered = []
+        lookback = self.config['sweep_lookback_bars']
+
+        for ifvg in ifvgs:
+            inv_time = ifvg['inversion_time']
+            pre_inv = m15_data[m15_data.index <= inv_time].tail(lookback)
+
+            if len(pre_inv) < 3:
+                filtered.append(ifvg)
+                continue
+
+            recent_high = pre_inv['high'].max()
+            recent_low = pre_inv['low'].min()
+
+            post_inv = m15_data[m15_data.index >= inv_time].head(3)
+            if post_inv.empty:
+                continue
+
+            if ifvg['direction'] == 'SELL':
+                if post_inv['high'].max() >= recent_high * 0.999:
+                    filtered.append(ifvg)
+            elif ifvg['direction'] == 'BUY':
+                if post_inv['low'].min() <= recent_low * 1.001:
+                    filtered.append(ifvg)
+
+        return filtered
+
+    def _check_m1_confirmation(self, bar, direction):
+        body = bar['close'] - bar['open']
+        total_range = bar['high'] - bar['low']
+
+        if total_range == 0:
+            return False
+
+        if direction == 'SELL':
+            if body < 0 and abs(body) / total_range > 0.3:
+                upper_wick = bar['high'] - max(bar['open'], bar['close'])
+                if upper_wick > abs(body) * 0.3:
+                    return True
+                if abs(body) / total_range > 0.5:
+                    return True
+            return False
+
+        elif direction == 'BUY':
+            if body > 0 and body / total_range > 0.3:
+                lower_wick = min(bar['open'], bar['close']) - bar['low']
+                if lower_wick > body * 0.3:
+                    return True
+                if body / total_range > 0.5:
+                    return True
+            return False
+
+        return False
 
     def _compute_structure_levels_fast(self, history_ohlc, day_data):
         levels = {
@@ -296,7 +576,7 @@ class IFVGStrategy:
                             'direction': 'BUY',
                             'fvg_top': fvg['top'],
                             'fvg_bottom': fvg['bottom'],
-                            'fvg_midpoint': fvg['midpoint'],
+                            'fvg_midpoint': fvg['fvg_midpoint'] if 'fvg_midpoint' in fvg else fvg['midpoint'],
                             'fvg_size': fvg['size'],
                             'inversion_time': times[j],
                             'zone_top': fvg['midpoint'],
@@ -363,6 +643,9 @@ class IFVGStrategy:
         be_trigger = self.config['be_trigger_rr']
         contract_val = self.config['contract_value']
         target_mode = self.config['target_mode']
+        use_trail = self.config.get('use_trailing_stop', False)
+        trail_trigger = self.config.get('trail_trigger_rr', 1.0)
+        trail_offset_pct = self.config.get('trail_offset_pct', 50) / 100.0
 
         entry_price = entry_bar['close']
 
@@ -391,7 +674,8 @@ class IFVGStrategy:
             return None
 
         result, exit_price, exit_time, pnl_pts = self._simulate_trade(
-            future_data, entry_price, tp_price, sl_price, direction, risk, use_be, be_trigger
+            future_data, entry_price, tp_price, sl_price, direction, risk,
+            use_be, be_trigger, use_trail, trail_trigger, trail_offset_pct
         )
 
         pnl_dollars = pnl_pts * contract_val
@@ -439,9 +723,12 @@ class IFVGStrategy:
                 return min(candidates)
             return entry_price + (risk * self.config['rr_target'])
 
-    def _simulate_trade(self, future_data, entry, tp, sl, direction, risk, use_be, be_trigger):
+    def _simulate_trade(self, future_data, entry, tp, sl, direction, risk,
+                        use_be, be_trigger, use_trail=False, trail_trigger=1.0, trail_offset_pct=0.5):
         current_sl = sl
         be_activated = False
+        trail_activated = False
+        best_price = entry
 
         highs = future_data['high'].values
         lows = future_data['low'].values
@@ -451,27 +738,53 @@ class IFVGStrategy:
         be_level_buy = entry + (risk * be_trigger) if use_be else None
         be_level_sell = entry - (risk * be_trigger) if use_be else None
 
+        trail_level_buy = entry + (risk * trail_trigger) if use_trail else None
+        trail_level_sell = entry - (risk * trail_trigger) if use_trail else None
+
         for i in range(len(future_data)):
             h, l, c = highs[i], lows[i], closes[i]
 
             if direction == 'BUY':
+                if h > best_price:
+                    best_price = h
+
                 if l <= current_sl:
                     pnl = current_sl - entry
                     label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
                     return label, current_sl, times[i], pnl
                 if h >= tp:
                     return 'WIN', tp, times[i], tp - entry
-                if use_be and not be_activated and be_level_buy is not None and h >= be_level_buy:
+
+                if use_trail and trail_level_buy is not None and h >= trail_level_buy:
+                    trail_activated = True
+                if trail_activated:
+                    trail_sl = best_price - (risk * trail_offset_pct)
+                    if trail_sl > current_sl:
+                        current_sl = trail_sl
+
+                if use_be and not be_activated and not trail_activated and be_level_buy is not None and h >= be_level_buy:
                     current_sl = entry + 1.0
                     be_activated = True
+
             else:
+                if l < best_price:
+                    best_price = l
+
                 if h >= current_sl:
                     pnl = entry - current_sl
                     label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
                     return label, current_sl, times[i], pnl
                 if l <= tp:
                     return 'WIN', tp, times[i], entry - tp
-                if use_be and not be_activated and be_level_sell is not None and l <= be_level_sell:
+
+                if use_trail and trail_level_sell is not None and l <= trail_level_sell:
+                    trail_activated = True
+                if trail_activated:
+                    trail_sl = best_price + (risk * trail_offset_pct)
+                    if trail_sl < current_sl:
+                        current_sl = trail_sl
+
+                if use_be and not be_activated and not trail_activated and be_level_sell is not None and l <= be_level_sell:
                     current_sl = entry - 1.0
                     be_activated = True
 
@@ -547,6 +860,14 @@ class IFVGStrategy:
 
         trades_per_month = total / max(total_days / 21, 1)
 
+        first_date = df['trade_date'].min()
+        last_date = df['trade_date'].max()
+        if first_date and last_date:
+            total_weeks = max(1, (last_date - first_date).days / 7)
+            trades_per_week = total / total_weeks
+        else:
+            trades_per_week = 0
+
         return {
             'total_trades': total,
             'wins': wins,
@@ -571,6 +892,7 @@ class IFVGStrategy:
             'max_consecutive_wins': max_cons_wins,
             'max_consecutive_losses': max_cons_losses,
             'trades_per_month': round(trades_per_month, 1),
+            'trades_per_week': round(trades_per_week, 2),
         }
 
     def _empty_metrics(self):
@@ -582,6 +904,6 @@ class IFVGStrategy:
             'best_day_pts', 'worst_day_pts', 'avg_daily_pnl',
             'winning_days', 'losing_days', 'total_trading_days',
             'max_consecutive_wins', 'max_consecutive_losses',
-            'trades_per_month',
+            'trades_per_month', 'trades_per_week',
         ]
         return {k: 0 for k in keys}

@@ -59,18 +59,20 @@ with st.sidebar:
 
     st.subheader("Strategy Parameters")
 
-    min_fvg = st.slider("Min FVG Size (pts)", 1.0, 15.0, 4.0, 0.5,
+    min_fvg = st.slider("Min FVG Size (pts)", 1.0, 15.0, 3.0, 0.5,
                          help="Minimum gap size on M15 to qualify as FVG")
-    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 12, 1,
+    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 15, 1,
                              help="Maximum age of M15 FVG before expiry")
-    rr_target = st.slider("Risk:Reward Target", 1.0, 5.0, 3.0, 0.5,
+    rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 1.2, 0.1,
                            help="Target R:R ratio for take profit")
-    max_risk = st.slider("Max Risk (pts)", 10.0, 100.0, 50.0, 5.0)
-    min_risk = st.slider("Min Risk (pts)", 1.0, 20.0, 5.0, 1.0)
+    max_risk = st.slider("Max Risk (pts)", 5.0, 60.0, 25.0, 1.0)
+    min_risk = st.slider("Min Risk (pts)", 1.0, 15.0, 5.0, 1.0)
     max_trades = st.slider("Max Trades / Day", 1, 4, 2, 1)
-    retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 50, 5,
+    retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 60, 5,
                                  help="How deep price must retrace into the inverted FVG zone on M1")
     cooldown = st.slider("Cooldown (minutes)", 0, 30, 10, 1)
+    entry_start_time = st.selectbox("Entry Start Time (ET)", ['09:30', '09:35', '09:40', '09:45', '09:50', '09:55', '10:00'],
+                                     index=3, help="Only look for entries after this time (later = higher win rate)")
     structure_lookback = st.slider("Structure Lookback (days)", 5, 60, 20, 5,
                                     help="Days of history for daily/weekly structure levels")
 
@@ -85,7 +87,51 @@ with st.sidebar:
 
     st.subheader("Risk Management")
     use_be = st.checkbox("Breakeven Protection", value=True)
-    be_trigger = st.slider("BE Trigger (xR)", 0.5, 3.0, 1.5, 0.1) if use_be else 1.5
+    be_trigger = st.slider("BE Trigger (xR)", 0.3, 2.0, 0.5, 0.1,
+                            help="Move stop to breakeven after price moves this many R in your favor") if use_be else 0.5
+
+    st.subheader("Trailing Stop")
+    use_trail = st.checkbox("Trailing Stop", value=True)
+    if use_trail:
+        trail_trigger = st.slider("Trail Trigger (xR)", 0.3, 2.0, 0.5, 0.1,
+                                   help="Start trailing after this many R in profit")
+        trail_offset = st.slider("Trail Offset (%)", 10, 70, 30, 5,
+                                  help="Trail distance as % of risk")
+    else:
+        trail_trigger = 0.5
+        trail_offset = 30
+
+    st.subheader("Quality Filters")
+    use_displacement = st.checkbox("Displacement Filter", value=True,
+                                    help="Require strong displacement candle behind FVG")
+    if use_displacement:
+        disp_body_pct = st.slider("Min Displacement Body %", 30, 80, 55, 5)
+        disp_size = st.slider("Min Displacement Size (pts)", 1.0, 10.0, 3.5, 0.5)
+    else:
+        disp_body_pct = 55
+        disp_size = 3.5
+
+    use_confirmation = st.checkbox("M1 Confirmation Candle", value=True,
+                                    help="Require a rejection/momentum candle on M1 before entry")
+
+    with st.expander("Advanced Filters"):
+        use_session_momentum = st.checkbox("Session Momentum Filter", value=False,
+                                            help="Require pre-killzone momentum to align with bias")
+        momentum_threshold = st.slider("Momentum Threshold", 0.1, 0.8, 0.4, 0.1) if use_session_momentum else 0.4
+
+        use_range_filter = st.checkbox("Previous Day Range Filter", value=False,
+                                        help="Filter days by previous day's range")
+        min_range = st.slider("Min Prev Day Range", 20.0, 150.0, 60.0, 10.0) if use_range_filter else 60.0
+        max_range = st.slider("Max Prev Day Range", 150.0, 800.0, 400.0, 50.0) if use_range_filter else 400.0
+
+        use_confluence = st.checkbox("Structure Confluence", value=False,
+                                      help="FVG zone must be near a key structure level")
+        confluence_dist = st.slider("Confluence Distance (pts)", 10.0, 80.0, 50.0, 5.0) if use_confluence else 50.0
+
+        use_trend = st.checkbox("Multi-Day Trend Filter", value=False,
+                                 help="Require multi-day trend to align with H1 bias")
+        trend_days = st.slider("Trend Lookback Days", 2, 10, 3) if use_trend else 3
+
     contract_value = st.number_input("Point Value ($)", value=2.0, step=0.5)
 
     run_button = st.button("Run Backtest", type="primary", use_container_width=True)
@@ -107,6 +153,23 @@ if run_button:
         'retracement_pct': retracement_pct,
         'cooldown_minutes': cooldown,
         'structure_lookback_days': structure_lookback,
+        'entry_start_time': entry_start_time,
+        'use_trailing_stop': use_trail,
+        'trail_trigger_rr': trail_trigger,
+        'trail_offset_pct': trail_offset,
+        'use_displacement_filter': use_displacement,
+        'min_displacement_body_pct': disp_body_pct,
+        'min_displacement_size': disp_size,
+        'use_m1_confirmation': use_confirmation,
+        'use_session_momentum': use_session_momentum,
+        'momentum_threshold': momentum_threshold,
+        'use_range_filter': use_range_filter,
+        'min_prev_day_range': min_range,
+        'max_prev_day_range': max_range,
+        'use_structure_confluence': use_confluence,
+        'confluence_distance_pts': confluence_dist,
+        'use_trend_filter': use_trend,
+        'trend_lookback_days': trend_days,
     }
 
     with st.spinner("Loading data..."):
@@ -130,7 +193,7 @@ if 'results' in st.session_state:
 
     st.header("Performance Overview")
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     with col1:
         st.metric("Total Trades", metrics['total_trades'])
     with col2:
@@ -142,16 +205,20 @@ if 'results' in st.session_state:
     with col5:
         st.metric("Profit Factor", f"{metrics['profit_factor']:.2f}")
     with col6:
+        st.metric("Trades/Week", f"~{metrics.get('trades_per_week', 0):.1f}")
+    with col7:
         st.metric("Trades/Month", f"~{metrics.get('trades_per_month', 0):.0f}")
 
-    col7, col8, col9, col10 = st.columns(4)
-    with col7:
-        st.metric("Max Drawdown", f"{metrics['max_drawdown_pts']:.1f} pts")
+    col8, col9, col10, col11, col12 = st.columns(5)
     with col8:
-        st.metric("Avg R:R on Wins", f"{metrics['avg_rr_on_wins']:.2f}")
+        st.metric("Max Drawdown", f"{metrics['max_drawdown_pts']:.1f} pts")
     with col9:
-        st.metric("Win Days", f"{metrics['winning_days']}/{metrics['total_trading_days']}")
+        st.metric("Avg R:R on Wins", f"{metrics['avg_rr_on_wins']:.2f}")
     with col10:
+        st.metric("Max Loss Streak", f"{metrics.get('max_consecutive_losses', 0)}")
+    with col11:
+        st.metric("Win Days", f"{metrics['winning_days']}/{metrics['total_trading_days']}")
+    with col12:
         st.metric("Avg Daily P&L", f"{metrics['avg_daily_pnl']:+.1f} pts")
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -510,10 +577,12 @@ if 'results' in st.session_state:
             st.caption("Score combines: P&L, Profit Factor, Calmar Ratio, Win Rate, Trade Count, and Consistency")
 
             param_cols = ['min_fvg_size', 'max_fvg_age_m15', 'rr_target', 'max_trades_per_day',
-                          'retracement_pct', 'min_risk_pts', 'max_risk_pts', 'be_trigger_rr', 'cooldown_minutes']
+                          'retracement_pct', 'min_risk_pts', 'max_risk_pts', 'be_trigger_rr',
+                          'trail_trigger_rr', 'trail_offset_pct', 'min_displacement_body_pct',
+                          'min_displacement_size', 'entry_start_time', 'cooldown_minutes']
             metric_cols = ['score', 'total_pnl_pts', 'total_pnl_dollars', 'profit_factor', 'win_rate',
-                           'max_drawdown_pts', 'total_trades', 'trades_per_month', 'calmar_ratio',
-                           'avg_rr_on_wins', 'max_consecutive_losses']
+                           'max_drawdown_pts', 'total_trades', 'trades_per_week', 'trades_per_month',
+                           'calmar_ratio', 'avg_rr_on_wins', 'max_consecutive_losses']
 
             available_metric_cols = [c for c in metric_cols if c in top_saved.columns]
             available_param_cols = [c for c in param_cols if c in top_saved.columns]
@@ -592,12 +661,15 @@ if 'results' in st.session_state:
         grid_size = get_param_grid_size()
         oc1, oc2 = st.columns(2)
         with oc1:
-            n_combos = st.slider("Number of random combinations to test", 50, min(2000, grid_size),
-                                  min(500, grid_size), 50,
-                                  help=f"Full grid has {grid_size:,} combinations. Random sampling finds good solutions efficiently.")
+            n_combos = st.slider("Number of random combinations to test", 50, min(500, grid_size),
+                                  min(100, grid_size), 50,
+                                  help=f"Full grid has {grid_size:,} combinations. ~0.6s per combo. Random sampling finds good solutions efficiently.")
         with oc2:
-            est_time = n_combos * 0.015
-            st.metric("Estimated Time", f"~{max(1, int(est_time))} seconds")
+            est_time = n_combos * 0.65
+            if est_time < 60:
+                st.metric("Estimated Time", f"~{max(1, int(est_time))} seconds")
+            else:
+                st.metric("Estimated Time", f"~{est_time/60:.1f} minutes")
 
         if st.button("Start Optimization", type="primary", use_container_width=True):
             progress_bar = st.progress(0, text="Loading data...")
