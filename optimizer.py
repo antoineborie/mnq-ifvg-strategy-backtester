@@ -6,19 +6,19 @@ from ifvg_strategy import IFVGStrategy
 
 
 PARAM_GRID = {
-    'min_fvg_size': [3.0, 4.0, 5.0],
-    'max_fvg_age_m15': [12, 15, 20],
+    'min_fvg_size': [3.0, 3.5, 4.0],
+    'max_fvg_age_m15': [6, 8, 10, 12],
     'rr_target': [1.0, 1.2, 1.5],
     'max_trades_per_day': [1, 2],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
-    'max_risk_pts': [25.0, 35.0],
+    'max_risk_pts': [20.0, 25.0],
     'be_trigger_rr': [0.5, 0.6],
     'trail_trigger_rr': [0.5, 0.6],
-    'trail_offset_pct': [25, 30, 40],
-    'min_displacement_body_pct': [50, 55],
+    'trail_offset_pct': [25, 30],
+    'min_displacement_body_pct': [55, 60, 65],
     'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['09:45', '09:50'],
+    'entry_start_time': ['10:00', '10:05', '10:10'],
     'cooldown_minutes': [10],
 }
 
@@ -39,22 +39,24 @@ FIXED_PARAMS = {
     'use_range_filter': False,
     'use_m1_momentum': False,
     'use_day_filter': False,
+    'use_stop_after_loss': True,
+    'use_opening_range_filter': True,
 }
 
 QUICK_PARAM_GRID = {
     'min_fvg_size': [3.0, 4.0],
-    'max_fvg_age_m15': [15],
+    'max_fvg_age_m15': [8, 10],
     'rr_target': [1.0, 1.2, 1.5],
-    'max_trades_per_day': [1, 2],
+    'max_trades_per_day': [1],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
     'max_risk_pts': [25.0],
     'be_trigger_rr': [0.5],
     'trail_trigger_rr': [0.5],
     'trail_offset_pct': [30],
-    'min_displacement_body_pct': [50, 55],
+    'min_displacement_body_pct': [55, 60],
     'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['09:45'],
+    'entry_start_time': ['10:05'],
     'cooldown_minutes': [10],
 }
 
@@ -660,30 +662,32 @@ def _compute_score(metrics):
     wr_std = metrics.get('monthly_wr_std', 99)
     wr_floor = metrics.get('monthly_wr_floor', 0)
 
-    score += consistency * 1.5
+    score += consistency * 2.5
 
     if months_below == 0:
-        score += 80
+        score += 150
     elif months_below <= 2:
-        score += 40
+        score += 80
     elif months_below <= 4:
-        score += 10
+        score += 30
+    elif months_below <= 6:
+        score += 0
     else:
-        score -= months_below * 10
+        score -= months_below * 15
 
     if wr_std < 8:
-        score += 40
+        score += 50
     elif wr_std < 12:
-        score += 20
+        score += 25
     elif wr_std < 16:
         score += 5
 
     if wr_floor >= 60:
-        score += 50
+        score += 80
     elif wr_floor >= 50:
-        score += 20
+        score += 30
     elif wr_floor < 40:
-        score -= 20
+        score -= 30
 
     return round(score, 2)
 

@@ -223,18 +223,18 @@ with st.sidebar:
 
     min_fvg = st.slider("Min FVG Size (pts)", 1.0, 15.0, 3.0, 0.5,
                          help="Minimum gap size on M15 to qualify as FVG")
-    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 15, 1,
+    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 8, 1,
                              help="Maximum age of M15 FVG before expiry")
     rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 1.2, 0.1,
                            help="Target R:R ratio for take profit")
     max_risk = st.slider("Max Risk (pts)", 5.0, 60.0, 25.0, 1.0)
     min_risk = st.slider("Min Risk (pts)", 1.0, 15.0, 5.0, 1.0)
-    max_trades = st.slider("Max Trades / Day", 1, 4, 2, 1)
+    max_trades = st.slider("Max Trades / Day", 1, 4, 1, 1)
     retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 60, 5,
                                  help="How deep price must retrace into the inverted FVG zone on M1")
     cooldown = st.slider("Cooldown (minutes)", 0, 30, 10, 1)
-    entry_start_time = st.selectbox("Entry Start Time (ET)", ['09:30', '09:35', '09:40', '09:45', '09:50', '09:55', '10:00'],
-                                     index=3, help="Only look for entries after this time (later = higher win rate)")
+    entry_start_time = st.selectbox("Entry Start Time (ET)", ['09:30', '09:35', '09:40', '09:45', '09:50', '09:55', '10:00', '10:05', '10:10', '10:15'],
+                                     index=7, help="Only look for entries after this time (later = higher win rate)")
     structure_lookback = st.slider("Structure Lookback (days)", 5, 60, 20, 5,
                                     help="Days of history for daily/weekly structure levels")
 
@@ -251,6 +251,8 @@ with st.sidebar:
     use_be = st.checkbox("Breakeven Protection", value=True)
     be_trigger = st.slider("BE Trigger (xR)", 0.3, 2.0, 0.5, 0.1,
                             help="Move stop to breakeven after price moves this many R in your favor") if use_be else 0.5
+    use_stop_after_loss = st.checkbox("Stop Apres Perte", value=True,
+                                       help="Arreter de trader pour la journee apres la premiere perte")
 
     st.subheader("Trailing Stop")
     use_trail = st.checkbox("Trailing Stop", value=True)
@@ -275,6 +277,8 @@ with st.sidebar:
 
     use_confirmation = st.checkbox("M1 Confirmation Candle", value=True,
                                     help="Require a rejection/momentum candle on M1 before entry")
+    use_opening_range_filter = st.checkbox("Filtre Opening Range", value=True,
+                                            help="L'Opening Range 09:30-09:45 doit confirmer le biais H1")
 
     with st.expander("Advanced Filters"):
         use_session_momentum = st.checkbox("Session Momentum Filter", value=False,
@@ -353,6 +357,8 @@ if run_button:
         'confluence_distance_pts': confluence_dist,
         'use_trend_filter': use_trend,
         'trend_lookback_days': trend_days,
+        'use_stop_after_loss': use_stop_after_loss,
+        'use_opening_range_filter': use_opening_range_filter,
         'use_volatility_regime': use_vol_regime,
         'vol_atr_period': vol_atr_period,
         'vol_low_percentile': vol_low_pct,
@@ -416,8 +422,8 @@ if 'results' in st.session_state:
 
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "Equity Curve", "Trade Log", "Statistics", "Statistical Analysis", "Daily Analysis", "Economic Calendar", "Optimizer", "Strategy Guide"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "Equity Curve", "Trade Log", "Statistics", "Consistance Mensuelle", "Statistical Analysis", "Daily Analysis", "Economic Calendar", "Optimizer", "Strategy Guide"
     ])
 
     with tab1:
@@ -615,6 +621,135 @@ if 'results' in st.session_state:
             st.dataframe(dir_stats, use_container_width=True)
 
     with tab4:
+        st.subheader("Consistance Mensuelle")
+        st.caption("Analyse de la regularite mensuelle — l'objectif est d'atteindre 60%+ de win rate chaque mois")
+
+        if 'entry_time' in trades_df.columns:
+            trades_df['entry_time'] = pd.to_datetime(trades_df['entry_time'])
+            if hasattr(trades_df['entry_time'].dt, 'tz') and trades_df['entry_time'].dt.tz is not None:
+                _et_naive = trades_df['entry_time'].dt.tz_localize(None)
+            else:
+                _et_naive = trades_df['entry_time']
+            trades_df['year_month'] = _et_naive.dt.to_period('M').astype(str)
+        elif 'trade_date' in trades_df.columns:
+            trades_df['trade_date'] = pd.to_datetime(trades_df['trade_date'])
+            trades_df['year_month'] = trades_df['trade_date'].dt.to_period('M').astype(str)
+
+        if 'year_month' in trades_df.columns:
+            monthly_grp = trades_df.groupby('year_month').agg(
+                trades=('pnl_pts', 'count'),
+                wins=('result', lambda x: (x == 'WIN').sum()),
+                pnl=('pnl_pts', 'sum'),
+            ).reset_index()
+            monthly_grp['win_rate'] = (monthly_grp['wins'] / monthly_grp['trades'] * 100).round(1)
+
+            qualified = monthly_grp[monthly_grp['trades'] >= 3]
+            q_wrs = qualified['win_rate'].values if len(qualified) > 0 else np.array([])
+            months_at_target = int((q_wrs >= 60).sum()) if len(q_wrs) > 0 else 0
+            months_below_60 = int((q_wrs < 60).sum()) if len(q_wrs) > 0 else 0
+            total_qualified = len(q_wrs)
+            consistency_score = round(months_at_target / total_qualified * 100, 1) if total_qualified > 0 else 0
+            wr_floor = round(float(q_wrs.min()), 1) if len(q_wrs) > 0 else 0
+            wr_ceiling = round(float(q_wrs.max()), 1) if len(q_wrs) > 0 else 0
+
+            mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+            with mc1:
+                st.metric("Score de Consistance", f"{consistency_score}%")
+            with mc2:
+                st.metric("Mois >= 60% WR", f"{months_at_target}/{total_qualified}")
+            with mc3:
+                st.metric("Mois < 60% WR", f"{months_below_60}",
+                           delta="OK" if months_below_60 == 0 else f"-{months_below_60}",
+                           delta_color="normal" if months_below_60 == 0 else "inverse")
+            with mc4:
+                st.metric("WR Plancher", f"{wr_floor}%")
+            with mc5:
+                st.metric("WR Plafond", f"{wr_ceiling}%")
+
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+            fig_wr = go.Figure()
+            bar_colors = []
+            for _, row in monthly_grp.iterrows():
+                if row['trades'] < 3:
+                    bar_colors.append(COLORS['gray'])
+                elif row['win_rate'] >= 60:
+                    bar_colors.append(COLORS['green'])
+                else:
+                    bar_colors.append(COLORS['red'])
+
+            fig_wr.add_trace(go.Bar(
+                x=monthly_grp['year_month'],
+                y=monthly_grp['win_rate'],
+                marker_color=bar_colors,
+                text=[f"{wr:.0f}%" for wr in monthly_grp['win_rate']],
+                textposition='outside',
+                textfont=dict(size=9, color='#c9d1d9'),
+                name='Win Rate %',
+            ))
+            fig_wr.add_hline(y=60, line_dash="dash", line_color=COLORS['green'],
+                              annotation_text="Objectif 60%", annotation_position="top right",
+                              annotation_font_color=COLORS['green'], line_width=2)
+            fig_wr.update_layout(
+                **CHART_LAYOUT, height=380,
+                title="Win Rate Mensuel",
+                yaxis_title="Win Rate %",
+                yaxis_range=[0, max(100, monthly_grp['win_rate'].max() + 10)],
+            )
+            st.plotly_chart(fig_wr, use_container_width=True)
+
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+            pnl_col_chart, count_col_chart = st.columns(2)
+
+            with pnl_col_chart:
+                fig_pnl_m = go.Figure()
+                fig_pnl_m.add_trace(go.Bar(
+                    x=monthly_grp['year_month'],
+                    y=monthly_grp['pnl'],
+                    marker_color=[COLORS['green'] if p > 0 else COLORS['red'] for p in monthly_grp['pnl']],
+                    name='P&L (pts)',
+                ))
+                fig_pnl_m.update_layout(
+                    **CHART_LAYOUT, height=340,
+                    title="P&L Mensuel (pts)",
+                    yaxis_title="P&L (pts)",
+                )
+                st.plotly_chart(fig_pnl_m, use_container_width=True)
+
+            with count_col_chart:
+                fig_cnt = go.Figure()
+                fig_cnt.add_trace(go.Bar(
+                    x=monthly_grp['year_month'],
+                    y=monthly_grp['trades'],
+                    marker_color=COLORS['blue'],
+                    name='Trades',
+                ))
+                fig_cnt.add_hline(y=3, line_dash="dot", line_color=COLORS['orange'],
+                                   annotation_text="Min 3 trades", annotation_position="top right",
+                                   annotation_font_color=COLORS['orange'], line_width=1)
+                fig_cnt.update_layout(
+                    **CHART_LAYOUT, height=340,
+                    title="Nombre de Trades par Mois",
+                    yaxis_title="Trades",
+                )
+                st.plotly_chart(fig_cnt, use_container_width=True)
+
+            st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+            st.markdown("#### Detail Mensuel")
+
+            display_monthly = monthly_grp.rename(columns={
+                'year_month': 'Mois',
+                'trades': 'Trades',
+                'wins': 'Gains',
+                'win_rate': 'WR %',
+                'pnl': 'P&L (pts)',
+            })
+            st.dataframe(display_monthly, use_container_width=True, hide_index=True)
+        else:
+            st.info("Donnees insuffisantes pour l'analyse mensuelle.")
+
+    with tab5:
         st.subheader("Advanced Statistical Analysis")
 
         stat_results = perform_full_stat_analysis(trades_df)
@@ -971,7 +1106,7 @@ if 'results' in st.session_state:
             with vm4:
                 st.metric("Worst Month", f"{worst_month['month']}: {worst_month['pnl']:+.1f}")
 
-    with tab5:
+    with tab6:
         daily = trades_df.groupby('trade_date').agg(
             trades=('pnl_pts', 'count'),
             pnl=('pnl_pts', 'sum'),
@@ -1029,7 +1164,7 @@ if 'results' in st.session_state:
 
         st.dataframe(daily, use_container_width=True)
 
-    with tab6:
+    with tab7:
         st.subheader("Economic Calendar Impact Analysis")
         st.caption("How does the strategy perform on CPI, PPI, NFP days vs normal days?")
 
@@ -1116,7 +1251,7 @@ if 'results' in st.session_state:
                 st.markdown("##### US Market Holidays")
                 st.dataframe(holidays_df, use_container_width=True)
 
-    with tab7:
+    with tab8:
         st.subheader("Parameter Optimizer")
         st.caption("Find the best strategy parameters by testing hundreds of combinations on your data")
 
@@ -1265,7 +1400,7 @@ if 'results' in st.session_state:
             st.success(f"Optimization complete! Tested {opt_result['total_combos']} combinations in {opt_result['elapsed']}s")
             st.rerun()
 
-    with tab8:
+    with tab9:
         st.subheader("Multi-TF IFVG Strategy — Guide Complet de Prise de Position")
         st.caption("Toutes les phases, analyses et conditions requises, de la preparation pre-session jusqu'a la gestion active du trade")
 
@@ -1424,7 +1559,7 @@ body_size = |close - open|
 - Le FVG baissier est "viole" par le haut = les vendeurs ont ete pieges = signal d'achat
 - **Zone de trade BUY** : du **midpoint** (milieu) au **bottom du FVG** (bas)
 
-**Contrainte temporelle** : L'inversion doit se produire dans les **15 barres M15** (3h45) suivant la creation du FVG. Au-dela, le FVG est considere comme expire.
+**Contrainte temporelle** : L'inversion doit se produire dans les **8 barres M15** (2h00) suivant la creation du FVG. Au-dela, le FVG est considere comme expire.
 
 **Alignement obligatoire** : L'inversion ne produit un signal que si elle est **dans la direction du biais H1**.
 """)
@@ -1451,7 +1586,7 @@ body_size = |close - open|
 **Objectif** : Trouver le point d'entree precis sur le timeframe 1 minute, en attendant un retracement dans la zone IFVG.
 
 **Fenetre d'entree** :
-- **Debut** : 09:45 ET (par defaut, retarde de 15 min apres l'ouverture pour filtrer la volatilite initiale)
+- **Debut** : 10:05 ET (par defaut, retarde de 35 min apres l'ouverture pour filtrer la volatilite initiale)
 - **Fin** : 11:00 ET (fin de killzone)
 - Le retracement doit se produire **APRES** l'inversion (pas avant)
 
@@ -1594,15 +1729,55 @@ risk = |entry_price - stop_loss|
 
 | Regle | Valeur par defaut |
 |-------|------------------|
-| Max trades par jour | **2** |
+| Max trades par jour | **1** |
 | Cooldown entre trades | **10 minutes** |
 | Chaque IFVG utilise une seule fois | Oui |
 | Killzone | **09:30 - 11:00 ET** |
-| Entrees a partir de | **09:45 ET** |
+| Entrees a partir de | **10:05 ET** |
+| Stop apres perte | **Oui** |
 
 **Logique du cooldown** : Apres chaque trade (gagnant ou perdant), attendre au minimum 10 minutes avant de chercher une nouvelle entree. Empeche les entrees emotionnelles consecutives.
 
 **Utilisation unique des IFVG** : Une fois qu'un IFVG a genere un trade (gagnant ou perdant), il ne peut plus etre utilise. Cela evite de re-entrer sur une zone deja exploitee.
+""")
+
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+        st.markdown("## Phase 12b : Stop Apres Perte")
+        st.markdown("""
+**Objectif** : Proteger le capital psychologique et financier en arretant de trader apres la premiere perte de la journee.
+
+**Fonctionnement** :
+- Si le premier trade de la journee est un **LOSS**, aucune nouvelle entree n'est recherchee pour le reste de la session
+- Cette regle empeche le **revenge trading** — la tendance a vouloir recuperer une perte en prenant des trades impulsifs
+- Active par defaut (`use_stop_after_loss = True`)
+
+**Justification** :
+- Les donnees montrent que le deuxieme trade apres une perte a souvent un win rate inferieur
+- En limitant a 1 perte max/jour, on reduit significativement le drawdown maximum
+- Un trader discipliné accepte la perte et revient le lendemain avec un esprit clair
+""")
+
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+        st.markdown("## Phase 12c : Filtre Opening Range")
+        st.markdown("""
+**Objectif** : Utiliser la direction de l'Opening Range (09:30 - 09:45 ET) comme filtre de confirmation du biais H1.
+
+**Fonctionnement** :
+1. Analyser les 15 premieres minutes de la session reguliere (09:30 - 09:45 ET)
+2. Calculer : `or_body = close_09:45 - open_09:30`
+3. Calculer : `or_range = high_09:45 - low_09:30`
+4. Si le body represente plus de **30%** du range → l'Opening Range a une direction claire
+5. Direction OR : **BUY** si body > 0, **SELL** si body < 0
+
+**Condition** :
+- La direction de l'Opening Range doit etre **identique** au biais H1
+- Si l'OR va dans le sens contraire du biais H1 → **pas de trade ce jour-la**
+- Active par defaut (`use_opening_range_filter = True`)
+
+**Logique** :
+- L'Opening Range capture l'intention initiale des participants institutionnels
+- Si les 15 premieres minutes vont dans le meme sens que le biais H1, c'est une **double confirmation**
+- Un conflit entre l'OR et le biais H1 signale une journee potentiellement indecise
 """)
 
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
@@ -1627,17 +1802,19 @@ CONSTRUCTION DU SIGNAL (M15)
 [10] Detecter les inversions (close au-dela du FVG, dans le sens du biais H1)
 [11] Appliquer filtres optionnels (confluence, liquidity sweep)
 
-ENTREE (M1 — a partir de 09:45 ET)
+ENTREE (M1 — a partir de 10:05 ET)
 ================================
-[12] Scanner chaque bougie M1 dans la killzone
-[13] Verifier retracement dans la zone IFVG (penetration >= 60%)
-[14] Valider la bougie de confirmation M1 (corps significatif + rejet)
-[15] Calculer entry/SL/TP et verifier que le risque est entre 5-25 pts
+[12] Verifier filtre Opening Range (direction OR = biais H1)
+[13] Scanner chaque bougie M1 dans la killzone
+[14] Verifier retracement dans la zone IFVG (penetration >= 60%)
+[15] Valider la bougie de confirmation M1 (corps significatif + rejet)
+[16] Calculer entry/SL/TP et verifier que le risque est entre 5-25 pts
 
 GESTION DU TRADE
 ================================
-[16] Surveiller barre par barre : SL → TP → trailing → breakeven → EOD
-[17] Respecter max 2 trades/jour et cooldown 10 min
+[17] Surveiller barre par barre : SL → TP → trailing → breakeven → EOD
+[18] Respecter max 1 trade/jour et cooldown 10 min
+[19] Stop apres perte : arreter si premier trade est un LOSS
 ```
 """)
 
@@ -1646,13 +1823,13 @@ GESTION DU TRADE
         if config_used:
             param_display = {
                 'Taille min FVG': f"{config_used.get('min_fvg_size', 3.0)} pts",
-                'Age max FVG (barres M15)': f"{config_used.get('max_fvg_age_m15', 15)}",
+                'Age max FVG (barres M15)': f"{config_used.get('max_fvg_age_m15', 8)}",
                 'R:R cible': f"{config_used.get('rr_target', 1.2)}",
                 'Risque max': f"{config_used.get('max_risk_pts', 25.0)} pts",
                 'Risque min': f"{config_used.get('min_risk_pts', 5.0)} pts",
-                'Max trades/jour': f"{config_used.get('max_trades_per_day', 2)}",
+                'Max trades/jour': f"{config_used.get('max_trades_per_day', 1)}",
                 'Killzone': f"{config_used.get('killzone_start', '09:30')} - {config_used.get('killzone_end', '11:00')} ET",
-                'Debut des entrees': f"{config_used.get('entry_start_time', '09:45')} ET",
+                'Debut des entrees': f"{config_used.get('entry_start_time', '10:05')} ET",
                 'Cooldown': f"{config_used.get('cooldown_minutes', 10)} min",
                 'Retracement': f"{config_used.get('retracement_pct', 60)}%",
                 'Breakeven trigger': f"{config_used.get('be_trigger_rr', 0.5)}R",
@@ -1661,6 +1838,8 @@ GESTION DU TRADE
                 'Displacement body min': f"{config_used.get('min_displacement_body_pct', 55)}%",
                 'Displacement taille min': f"{config_used.get('min_displacement_size', 3.5)} pts",
                 'Mode target': config_used.get('target_mode', 'fixed_rr'),
+                'Stop apres perte': 'Oui' if config_used.get('use_stop_after_loss', True) else 'Non',
+                'Filtre Opening Range': 'Oui' if config_used.get('use_opening_range_filter', True) else 'Non',
                 'Valeur du point': f"${config_used.get('contract_value', 2.0):.2f}",
             }
             pc1, pc2 = st.columns(2)

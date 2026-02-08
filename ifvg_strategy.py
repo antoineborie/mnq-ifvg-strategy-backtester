@@ -6,11 +6,11 @@ class IFVGStrategy:
     def __init__(self, config=None):
         defaults = {
             'min_fvg_size': 3.0,
-            'max_fvg_age_m15': 15,
+            'max_fvg_age_m15': 8,
             'rr_target': 1.2,
             'max_risk_pts': 25.0,
             'min_risk_pts': 5.0,
-            'max_trades_per_day': 2,
+            'max_trades_per_day': 1,
             'killzone_start': '09:30',
             'killzone_end': '11:00',
             'use_be': True,
@@ -40,7 +40,7 @@ class IFVGStrategy:
             'use_trailing_stop': True,
             'trail_trigger_rr': 0.5,
             'trail_offset_pct': 30,
-            'entry_start_time': '09:45',
+            'entry_start_time': '10:05',
             'use_m1_momentum': False,
             'momentum_bars': 5,
             'momentum_min_score': 3,
@@ -53,6 +53,18 @@ class IFVGStrategy:
             'vol_low_max_trades': 1,
             'vol_low_min_displacement_mult': 1.2,
             'vol_high_max_risk_mult': 0.8,
+            'use_enhanced_bias': False,
+            'bias_opening_range_minutes': 15,
+            'bias_prev_day_weight': True,
+            'bias_min_confidence': 2,
+            'use_stop_after_loss': True,
+            'use_fvg_freshness': False,
+            'max_fvg_age_minutes': 120,
+            'use_multi_confirm': False,
+            'confirm_require_wick_rejection': True,
+            'confirm_require_body_ratio': 40,
+            'use_opening_range_filter': True,
+            'opening_range_bias_only': True,
         }
         self.config = {**defaults, **(config or {})}
         self.trades = []
@@ -181,9 +193,18 @@ class IFVGStrategy:
 
         structure = self._compute_structure_levels_fast(history_ohlc, day_data)
 
-        h1_bias = self._determine_h1_bias(day_data, killzone_m1)
-        if h1_bias is None:
-            return
+        if active_cfg.get('use_enhanced_bias', False):
+            h1_bias, bias_confidence = self._determine_enhanced_bias(day_data, killzone_m1, history_ohlc)
+            if h1_bias is None:
+                return
+            min_conf = active_cfg.get('bias_min_confidence', 2)
+            if bias_confidence < min_conf:
+                return
+        else:
+            h1_bias = self._determine_h1_bias(day_data, killzone_m1)
+            if h1_bias is None:
+                return
+            bias_confidence = 1
 
         if active_cfg['use_trend_filter'] and trend_bias is not None:
             if trend_bias != h1_bias:
@@ -193,6 +214,20 @@ class IFVGStrategy:
             momentum_ok = self._check_session_momentum(day_data, killzone_m1, h1_bias)
             if not momentum_ok:
                 return
+
+        if active_cfg.get('use_opening_range_filter', False):
+            or_data = day_data.between_time('09:30', '09:45')
+            if len(or_data) >= 5:
+                or_open = or_data.iloc[0]['open']
+                or_close = or_data.iloc[-1]['close']
+                or_high = or_data['high'].max()
+                or_low = or_data['low'].min()
+                or_range = or_high - or_low
+                or_body = or_close - or_open
+                if or_range > 0 and abs(or_body) / or_range > 0.3:
+                    or_bias = 'BUY' if or_body > 0 else 'SELL'
+                    if or_bias != h1_bias:
+                        return
 
         pre_kz = day_data[day_data.index < killzone_m1.index[0]]
         kz_and_before = pd.concat([pre_kz, killzone_m1]).sort_index()
@@ -211,6 +246,10 @@ class IFVGStrategy:
 
         m15_ifvgs = self._detect_ifvgs_m15(m15_fvgs, m15_data, h1_bias, structure)
 
+        if active_cfg.get('use_fvg_freshness', False):
+            max_age_min = active_cfg.get('max_fvg_age_minutes', 120)
+            m15_ifvgs = self._filter_by_freshness(m15_ifvgs, killzone_m1, max_age_min)
+
         if active_cfg['use_structure_confluence']:
             m15_ifvgs = self._filter_by_confluence(m15_ifvgs, structure)
 
@@ -222,6 +261,7 @@ class IFVGStrategy:
         last_trade_time = None
         cooldown = active_cfg['cooldown_minutes']
         used_ifvgs = set()
+        had_loss_today = False
 
         kz_highs = killzone_m1['high'].values
         kz_lows = killzone_m1['low'].values
@@ -235,6 +275,9 @@ class IFVGStrategy:
 
         for i in range(len(killzone_m1)):
             if trades_today >= max_trades:
+                break
+
+            if active_cfg.get('use_stop_after_loss', False) and had_loss_today:
                 break
 
             current_time = kz_times[i]
@@ -265,7 +308,10 @@ class IFVGStrategy:
 
                 entry_signal = self._check_m1_retracement(ifvg, current_bar, current_time)
                 if entry_signal:
-                    if active_cfg['use_m1_confirmation']:
+                    if active_cfg.get('use_multi_confirm', False):
+                        if not self._check_enhanced_confirmation(killzone_m1, i, ifvg['direction'], active_cfg):
+                            continue
+                    elif active_cfg['use_m1_confirmation']:
                         if not self._check_m1_confirmation(current_bar, ifvg['direction']):
                             continue
 
@@ -279,10 +325,13 @@ class IFVGStrategy:
                     )
                     if trade:
                         trade['vol_regime'] = vol_regime
+                        trade['bias_confidence'] = bias_confidence
                         self.trades.append(trade)
                         trades_today += 1
                         last_trade_time = current_time
                         used_ifvgs.add(ifvg['id'])
+                        if trade['result'] == 'LOSS':
+                            had_loss_today = True
                         break
 
     def _check_session_momentum(self, day_data, killzone, h1_bias):
@@ -431,6 +480,70 @@ class IFVGStrategy:
 
         return filtered
 
+    def _filter_by_freshness(self, ifvgs, killzone, max_age_minutes):
+        if not ifvgs or killzone.empty:
+            return ifvgs
+
+        filtered = []
+        kz_start = killzone.index[0]
+
+        for ifvg in ifvgs:
+            inv_time = ifvg.get('inversion_time')
+            if inv_time is None:
+                filtered.append(ifvg)
+                continue
+            age_minutes = (kz_start - inv_time).total_seconds() / 60
+            if age_minutes <= max_age_minutes:
+                filtered.append(ifvg)
+
+        return filtered if filtered else ifvgs[:1]
+
+    def _check_enhanced_confirmation(self, killzone_m1, bar_idx, direction, cfg):
+        if bar_idx < 1 or bar_idx >= len(killzone_m1):
+            return False
+
+        current = killzone_m1.iloc[bar_idx]
+        body = current['close'] - current['open']
+        total_range = current['high'] - current['low']
+
+        if total_range == 0:
+            return False
+
+        min_body_ratio = cfg.get('confirm_require_body_ratio', 40) / 100.0
+        require_wick = cfg.get('confirm_require_wick_rejection', True)
+
+        if direction == 'SELL':
+            if body >= 0:
+                return False
+            if abs(body) / total_range < min_body_ratio:
+                return False
+            if require_wick:
+                upper_wick = current['high'] - max(current['open'], current['close'])
+                if upper_wick < abs(body) * 0.2:
+                    if abs(body) / total_range < 0.6:
+                        return False
+            prev = killzone_m1.iloc[bar_idx - 1]
+            if current['close'] > prev['close']:
+                return False
+            return True
+
+        elif direction == 'BUY':
+            if body <= 0:
+                return False
+            if body / total_range < min_body_ratio:
+                return False
+            if require_wick:
+                lower_wick = min(current['open'], current['close']) - current['low']
+                if lower_wick < body * 0.2:
+                    if body / total_range < 0.6:
+                        return False
+            prev = killzone_m1.iloc[bar_idx - 1]
+            if current['close'] < prev['close']:
+                return False
+            return True
+
+        return False
+
     def _check_m1_confirmation(self, bar, direction):
         body = bar['close'] - bar['open']
         total_range = bar['high'] - bar['low']
@@ -529,6 +642,70 @@ class IFVGStrategy:
 
         last_h1 = h1.iloc[-1]
         return 'BUY' if last_h1['close'] > last_h1['open'] else 'SELL'
+
+    def _determine_enhanced_bias(self, day_data, killzone, history_ohlc):
+        if killzone.empty:
+            return None, 0
+
+        kz_start = killzone.index[0]
+        confidence = 0
+
+        pre_kz = day_data[day_data.index < kz_start]
+        if len(pre_kz) < 10:
+            session_start = day_data.between_time('08:30', '09:30')
+            if session_start.empty:
+                return None, 0
+            pre_kz = session_start
+
+        h1 = pre_kz.resample('1h').agg({
+            'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'
+        }).dropna()
+
+        h1_bias = None
+        if not h1.empty:
+            last_h1 = h1.iloc[-1]
+            h1_body = last_h1['close'] - last_h1['open']
+            h1_range = last_h1['high'] - last_h1['low']
+            if h1_range > 0 and abs(h1_body) / h1_range > 0.3:
+                h1_bias = 'BUY' if h1_body > 0 else 'SELL'
+                confidence += 1
+                if abs(h1_body) / h1_range > 0.6:
+                    confidence += 1
+        elif not pre_kz.empty:
+            o = pre_kz.iloc[0]['open']
+            c = pre_kz.iloc[-1]['close']
+            h1_bias = 'BUY' if c > o else 'SELL'
+            confidence += 1
+
+        if h1_bias is None:
+            return None, 0
+
+        or_minutes = self.config.get('bias_opening_range_minutes', 15)
+        or_data = day_data.between_time('09:30', f'09:{30 + or_minutes}')
+        if len(or_data) >= 5:
+            or_open = or_data.iloc[0]['open']
+            or_close = or_data.iloc[-1]['close']
+            or_bias = 'BUY' if or_close > or_open else 'SELL'
+            if or_bias == h1_bias:
+                confidence += 1
+
+        if self.config.get('bias_prev_day_weight', True) and len(history_ohlc) > 0:
+            prev = history_ohlc.iloc[-1]
+            prev_close = prev['day_close']
+            prev_open = prev['day_open']
+            prev_bias = 'BUY' if prev_close > prev_open else 'SELL'
+            if prev_bias == h1_bias:
+                confidence += 1
+
+        pre_market = day_data.between_time('04:00', '09:30')
+        if len(pre_market) >= 30:
+            pm_open = pre_market.iloc[0]['open']
+            pm_close = pre_market.iloc[-1]['close']
+            pm_bias = 'BUY' if pm_close > pm_open else 'SELL'
+            if pm_bias == h1_bias:
+                confidence += 1
+
+        return h1_bias, confidence
 
     def _detect_fvgs_m15(self, m15_data, min_size_override=None):
         fvgs = []
