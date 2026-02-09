@@ -6,11 +6,11 @@ class IFVGStrategy:
     def __init__(self, config=None):
         defaults = {
             'min_fvg_size': 3.0,
-            'max_fvg_age_m15': 12,
-            'rr_target': 1.2,
+            'max_fvg_age_m15': 15,
+            'rr_target': 0.8,
             'max_risk_pts': 25.0,
             'min_risk_pts': 5.0,
-            'max_trades_per_day': 2,
+            'max_trades_per_day': 1,
             'killzone_start': '09:30',
             'killzone_end': '12:00',
             'use_be': True,
@@ -39,7 +39,7 @@ class IFVGStrategy:
             'max_prev_day_range': 400.0,
             'use_trailing_stop': True,
             'trail_trigger_rr': 0.3,
-            'trail_offset_pct': 30,
+            'trail_offset_pct': 25,
             'entry_start_time': '10:00',
             'use_m1_momentum': False,
             'momentum_bars': 5,
@@ -65,7 +65,7 @@ class IFVGStrategy:
             'confirm_require_body_ratio': 40,
             'use_opening_range_filter': False,
             'opening_range_bias_only': True,
-            'partial_tp_pct': 60,
+            'partial_tp_pct': 100,
         }
         self.config = {**defaults, **(config or {})}
         self.trades = []
@@ -870,7 +870,7 @@ class IFVGStrategy:
         use_trail = cfg.get('use_trailing_stop', False)
         trail_trigger = cfg.get('trail_trigger_rr', 1.0)
         trail_offset_pct = cfg.get('trail_offset_pct', 50) / 100.0
-        partial_tp_pct = cfg.get('partial_tp_pct', 60)
+        partial_tp_pct = cfg.get('partial_tp_pct', 100)
 
         entry_price = entry_bar['close']
 
@@ -957,7 +957,7 @@ class IFVGStrategy:
 
     def _simulate_trade(self, future_data, entry, tp, sl, direction, risk,
                         use_be, be_trigger, use_trail=False, trail_trigger=1.0, trail_offset_pct=0.5,
-                        partial_tp_pct=60):
+                        partial_tp_pct=100):
         current_sl = sl
         be_activated = False
         trail_activated = False
@@ -974,15 +974,6 @@ class IFVGStrategy:
         trail_level_buy = entry + (risk * trail_trigger) if use_trail else None
         trail_level_sell = entry - (risk * trail_trigger) if use_trail else None
 
-        partial_ratio = partial_tp_pct / 100.0
-        tp_distance = abs(tp - entry)
-        partial_tp_threshold = tp_distance * partial_ratio
-
-        if direction == 'BUY':
-            partial_tp_level = entry + partial_tp_threshold
-        else:
-            partial_tp_level = entry - partial_tp_threshold
-
         for i in range(len(future_data)):
             h, l, c = highs[i], lows[i], closes[i]
 
@@ -992,19 +983,13 @@ class IFVGStrategy:
 
                 if l <= current_sl:
                     pnl = current_sl - entry
-                    if pnl >= partial_tp_threshold:
-                        label = 'WIN'
-                    elif pnl > 0:
+                    if pnl > 0:
                         label = 'BE'
                     else:
                         label = 'LOSS'
                     return label, current_sl, times[i], pnl
                 if h >= tp:
                     return 'WIN', tp, times[i], tp - entry
-
-                if h >= partial_tp_level:
-                    pnl = partial_tp_level - entry
-                    return 'WIN', partial_tp_level, times[i], pnl
 
                 if use_trail and trail_level_buy is not None and h >= trail_level_buy:
                     trail_activated = True
@@ -1023,19 +1008,13 @@ class IFVGStrategy:
 
                 if h >= current_sl:
                     pnl = entry - current_sl
-                    if pnl >= partial_tp_threshold:
-                        label = 'WIN'
-                    elif pnl > 0:
+                    if pnl > 0:
                         label = 'BE'
                     else:
                         label = 'LOSS'
                     return label, current_sl, times[i], pnl
                 if l <= tp:
                     return 'WIN', tp, times[i], entry - tp
-
-                if l <= partial_tp_level:
-                    pnl = entry - partial_tp_level
-                    return 'WIN', partial_tp_level, times[i], pnl
 
                 if use_trail and trail_level_sell is not None and l <= trail_level_sell:
                     trail_activated = True

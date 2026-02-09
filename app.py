@@ -198,6 +198,7 @@ COLORS = {
 }
 
 data_files = list_data_files()
+data_files_2024_plus = [f for f in data_files if any(y in os.path.basename(f) for y in ['2024', '2025', '2026'])]
 file_labels = [os.path.basename(f).replace('.pkl', '').replace('MNQ_', '') for f in data_files]
 
 with st.sidebar:
@@ -211,7 +212,7 @@ with st.sidebar:
     selected_files = st.multiselect(
         "Select months to backtest",
         options=data_files,
-        default=data_files,
+        default=data_files_2024_plus,
         format_func=lambda x: os.path.basename(x).replace('.pkl', '').replace('MNQ_', ''),
     )
 
@@ -223,13 +224,13 @@ with st.sidebar:
 
     min_fvg = st.slider("Min FVG Size (pts)", 1.0, 15.0, 3.0, 0.5,
                          help="Minimum gap size on M15 to qualify as FVG")
-    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 12, 1,
+    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 15, 1,
                              help="Maximum age of M15 FVG before expiry")
-    rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 1.2, 0.1,
+    rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 0.8, 0.1,
                            help="Target R:R ratio for take profit")
     max_risk = st.slider("Max Risk (pts)", 5.0, 60.0, 25.0, 1.0)
     min_risk = st.slider("Min Risk (pts)", 1.0, 15.0, 5.0, 1.0)
-    max_trades = st.slider("Max Trades / Day", 1, 4, 2, 1)
+    max_trades = st.slider("Max Trades / Day", 1, 4, 1, 1)
     retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 60, 5,
                                  help="How deep price must retrace into the inverted FVG zone on M1")
     cooldown = st.slider("Cooldown (minutes)", 0, 30, 10, 1)
@@ -254,16 +255,14 @@ with st.sidebar:
     use_stop_after_loss = st.checkbox("Stop Apres Perte", value=True,
                                        help="Arreter de trader pour la journee apres la premiere perte")
 
-    st.subheader("Prise de Profit Partielle")
-    partial_tp_pct = st.slider("TP Partiel (%)", 30, 100, 60, 5,
-                                help="Fermer le trade en WIN quand le prix atteint ce % du TP total. Ex: 60% = prendre le profit a 60% du TP cible.")
+    partial_tp_pct = 100
 
     st.subheader("Trailing Stop")
     use_trail = st.checkbox("Trailing Stop", value=True)
     if use_trail:
         trail_trigger = st.slider("Trail Trigger (xR)", 0.3, 2.0, 0.3, 0.1,
                                    help="Start trailing after this many R in profit")
-        trail_offset = st.slider("Trail Offset (%)", 10, 70, 30, 5,
+        trail_offset = st.slider("Trail Offset (%)", 10, 70, 25, 5,
                                   help="Trail distance as % of risk")
     else:
         trail_trigger = 0.5
@@ -1854,7 +1853,7 @@ GESTION DU TRADE
                 'Cooldown': f"{config_used.get('cooldown_minutes', 10)} min",
                 'Retracement': f"{config_used.get('retracement_pct', 60)}%",
                 'Breakeven trigger': f"{config_used.get('be_trigger_rr', 0.5)}R",
-                'TP Partiel': f"{config_used.get('partial_tp_pct', 60)}%",
+                'Definition WIN': 'TP touche uniquement',
                 'Trailing trigger': f"{config_used.get('trail_trigger_rr', 0.3)}R",
                 'Trailing offset': f"{config_used.get('trail_offset_pct', 30)}%",
                 'Displacement body min': f"{config_used.get('min_displacement_body_pct', 55)}%",

@@ -6,19 +6,19 @@ from ifvg_strategy import IFVGStrategy
 
 
 PARAM_GRID = {
-    'min_fvg_size': [3.0, 3.5, 4.0],
-    'max_fvg_age_m15': [8, 10, 12, 15],
-    'rr_target': [1.0, 1.2, 1.5],
+    'min_fvg_size': [2.5, 3.0, 3.5, 4.0],
+    'max_fvg_age_m15': [10, 12, 15],
+    'rr_target': [0.8, 1.0, 1.2],
     'max_trades_per_day': [1, 2],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
     'max_risk_pts': [20.0, 25.0],
-    'be_trigger_rr': [0.5, 0.6],
-    'trail_trigger_rr': [0.3, 0.4, 0.5],
-    'trail_offset_pct': [25, 30, 35],
-    'min_displacement_body_pct': [55, 60, 65],
+    'be_trigger_rr': [0.4, 0.5],
+    'trail_trigger_rr': [0.3, 0.5],
+    'trail_offset_pct': [25, 30],
+    'min_displacement_body_pct': [50, 55, 60],
     'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['09:50', '10:00', '10:05'],
+    'entry_start_time': ['10:00', '10:05'],
     'cooldown_minutes': [10],
 }
 
@@ -41,20 +41,20 @@ FIXED_PARAMS = {
     'use_day_filter': False,
     'use_stop_after_loss': True,
     'use_opening_range_filter': False,
-    'partial_tp_pct': 60,
+    'partial_tp_pct': 100,
 }
 
 QUICK_PARAM_GRID = {
     'min_fvg_size': [3.0, 4.0],
-    'max_fvg_age_m15': [10, 12],
-    'rr_target': [1.0, 1.2, 1.5],
-    'max_trades_per_day': [2],
+    'max_fvg_age_m15': [12, 15],
+    'rr_target': [0.8, 1.0],
+    'max_trades_per_day': [1],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
     'max_risk_pts': [25.0],
     'be_trigger_rr': [0.5],
     'trail_trigger_rr': [0.3],
-    'trail_offset_pct': [30],
+    'trail_offset_pct': [25],
     'min_displacement_body_pct': [55, 60],
     'min_displacement_size': [3.0, 3.5],
     'entry_start_time': ['10:00'],
@@ -253,7 +253,7 @@ def _run_fast_backtest(precomputed_days, config):
     use_trail = config.get('use_trailing_stop', True)
     trail_trigger = config.get('trail_trigger_rr', 0.5)
     trail_offset_pct = config.get('trail_offset_pct', 30) / 100.0
-    partial_tp_pct = config.get('partial_tp_pct', 60)
+    partial_tp_pct = config.get('partial_tp_pct', 100)
 
     use_disp = config.get('use_displacement_filter', True)
     min_disp_body = config.get('min_displacement_body_pct', 55) / 100.0
@@ -432,7 +432,7 @@ def _run_fast_backtest(precomputed_days, config):
 
 def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction, risk,
                     use_be, be_trigger, use_trail=True, trail_trigger=0.5, trail_offset_pct=0.3,
-                    partial_tp_pct=60):
+                    partial_tp_pct=100):
     current_sl = sl
     be_activated = False
     trail_activated = False
@@ -440,14 +440,6 @@ def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction,
 
     be_level = entry + (risk * be_trigger) if direction == 'BUY' else entry - (risk * be_trigger)
     trail_level = entry + (risk * trail_trigger) if direction == 'BUY' else entry - (risk * trail_trigger)
-
-    partial_ratio = partial_tp_pct / 100.0
-    tp_distance = abs(tp - entry)
-    partial_tp_threshold = tp_distance * partial_ratio
-    if direction == 'BUY':
-        partial_tp_level = entry + partial_tp_threshold
-    else:
-        partial_tp_level = entry - partial_tp_threshold
 
     for i in range(start, len(highs)):
         h, l, c = highs[i], lows[i], closes[i]
@@ -458,19 +450,13 @@ def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction,
 
             if l <= current_sl:
                 pnl = current_sl - entry
-                if pnl >= partial_tp_threshold:
-                    label = 'WIN'
-                elif pnl > 0:
+                if pnl > 0:
                     label = 'BE'
                 else:
                     label = 'LOSS'
                 return label, current_sl, times[i], pnl
             if h >= tp:
                 return 'WIN', tp, times[i], tp - entry
-
-            if h >= partial_tp_level:
-                pnl = partial_tp_level - entry
-                return 'WIN', partial_tp_level, times[i], pnl
 
             if use_trail and h >= trail_level:
                 trail_activated = True
@@ -488,19 +474,13 @@ def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction,
 
             if h >= current_sl:
                 pnl = entry - current_sl
-                if pnl >= partial_tp_threshold:
-                    label = 'WIN'
-                elif pnl > 0:
+                if pnl > 0:
                     label = 'BE'
                 else:
                     label = 'LOSS'
                 return label, current_sl, times[i], pnl
             if l <= tp:
                 return 'WIN', tp, times[i], entry - tp
-
-            if l <= partial_tp_level:
-                pnl = entry - partial_tp_level
-                return 'WIN', partial_tp_level, times[i], pnl
 
             if use_trail and l <= trail_level:
                 trail_activated = True
