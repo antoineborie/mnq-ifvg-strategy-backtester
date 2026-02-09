@@ -53,27 +53,30 @@ UI language: French for all user-facing labels, tabs, and documentation within t
 ### Strategy Configuration (Optimized Defaults — Feb 2026)
 The strategy uses a dictionary-based configuration pattern with optimized defaults prioritizing **monthly consistency** (60%+ WR every month):
 - `min_fvg_size`: 3.0 points minimum gap size
-- `max_fvg_age_m15`: **8 bars** maximum gap age (reduced from 15 for fresher signals)
+- `max_fvg_age_m15`: **12 bars** maximum gap age (balanced freshness vs opportunity)
 - `rr_target`: 1.2 risk-to-reward ratio
 - `max_risk_pts` / `min_risk_pts`: 25.0 / 5.0 points risk bounds
-- `max_trades_per_day`: **1** (reduced from 2, critical for consistency)
+- `max_trades_per_day`: **2** (increased for ~3 trades/week target)
 - `contract_value`: $2.00 per point (MNQ specification)
 - Break-even trigger at 0.5 RR
-- Trailing stop: trigger at 0.5R, 30% offset (ESSENTIAL — removing drops WR to 43%)
+- Trailing stop: trigger at **0.3R**, 30% offset (ESSENTIAL — earlier trigger locks in more wins)
 - Displacement filter: 55% body ratio, 3.5 pts minimum
 - M1 confirmation candle required
-- `entry_start_time`: **10:05** ET (delayed from 09:45 for higher consistency)
+- `killzone_end`: **12:00** ET (extended from 11:00 for more opportunity)
+- `entry_start_time`: **10:00** ET (balanced: avoids early noise while allowing more setups)
 - `use_stop_after_loss`: **True** (stops trading after first loss of day)
-- `use_opening_range_filter`: **True** (requires OR bias alignment with H1 bias)
+- `use_opening_range_filter`: **False** (disabled — too restrictive for ~3 TPW target)
 - 10-minute cooldown between trades
 
-### Performance Results (Optimized Config)
-- **137 trades** over ~29 months of data
-- **75.9% overall WR**, +622 pts P&L
-- **93% monthly consistency**: 27/29 qualified months at 60%+ WR
-- Only 2 weak months: 2024-06 (25% WR, 4 trades), 2024-08 (50% WR, 4 trades)
-- Trade frequency: ~0.9 trades/week (below 2-3 target, but consistency prioritized)
-- Key insight: Opening Range filter + 1 trade/day were critical — removing either drops consistency significantly
+### Performance Results (Optimized Config — P4d, Feb 2026)
+- **411 trades** over ~37 months of data (Oct 2023 – Feb 2026)
+- **73.5% overall WR**, +1129 pts P&L, PF 2.0
+- **89.2% monthly consistency**: 33/37 qualified months at 60%+ WR
+- Floor WR: 44.4% (worst qualified month)
+- Max drawdown: -54.77 pts, max consecutive losses: 3
+- Trade frequency: **2.59 trades/week** (~3/week target achieved)
+- Yearly WR trend: 75.4% (2023) → 76.9% (2024) → 68.5% (2025) → 60.0% (2026)
+- Key changes from previous config: KZ extended to 12:00, trail trigger 0.3R (earlier), 2 TPD, OR filter disabled
 
 ### Project Status
 The project is fully implemented with a multi-timeframe IFVG backtest engine and interactive Streamlit dashboard. All core features are complete:

@@ -223,24 +223,24 @@ with st.sidebar:
 
     min_fvg = st.slider("Min FVG Size (pts)", 1.0, 15.0, 3.0, 0.5,
                          help="Minimum gap size on M15 to qualify as FVG")
-    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 8, 1,
+    max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 12, 1,
                              help="Maximum age of M15 FVG before expiry")
     rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 1.2, 0.1,
                            help="Target R:R ratio for take profit")
     max_risk = st.slider("Max Risk (pts)", 5.0, 60.0, 25.0, 1.0)
     min_risk = st.slider("Min Risk (pts)", 1.0, 15.0, 5.0, 1.0)
-    max_trades = st.slider("Max Trades / Day", 1, 4, 1, 1)
+    max_trades = st.slider("Max Trades / Day", 1, 4, 2, 1)
     retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 60, 5,
                                  help="How deep price must retrace into the inverted FVG zone on M1")
     cooldown = st.slider("Cooldown (minutes)", 0, 30, 10, 1)
     entry_start_time = st.selectbox("Entry Start Time (ET)", ['09:30', '09:35', '09:40', '09:45', '09:50', '09:55', '10:00', '10:05', '10:10', '10:15'],
-                                     index=7, help="Only look for entries after this time (later = higher win rate)")
+                                     index=6, help="Only look for entries after this time (later = higher win rate)")
     structure_lookback = st.slider("Structure Lookback (days)", 5, 60, 20, 5,
                                     help="Days of history for daily/weekly structure levels")
 
     st.subheader("Killzone (ET)")
     kz_start = st.text_input("Start", "09:30")
-    kz_end = st.text_input("End", "11:00")
+    kz_end = st.text_input("End", "12:00")
 
     st.subheader("Target Mode")
     target_mode = st.radio("Take Profit Method", ["fixed_rr", "ssl"],
@@ -257,7 +257,7 @@ with st.sidebar:
     st.subheader("Trailing Stop")
     use_trail = st.checkbox("Trailing Stop", value=True)
     if use_trail:
-        trail_trigger = st.slider("Trail Trigger (xR)", 0.3, 2.0, 0.5, 0.1,
+        trail_trigger = st.slider("Trail Trigger (xR)", 0.3, 2.0, 0.3, 0.1,
                                    help="Start trailing after this many R in profit")
         trail_offset = st.slider("Trail Offset (%)", 10, 70, 30, 5,
                                   help="Trail distance as % of risk")
@@ -277,7 +277,7 @@ with st.sidebar:
 
     use_confirmation = st.checkbox("M1 Confirmation Candle", value=True,
                                     help="Require a rejection/momentum candle on M1 before entry")
-    use_opening_range_filter = st.checkbox("Filtre Opening Range", value=True,
+    use_opening_range_filter = st.checkbox("Filtre Opening Range", value=False,
                                             help="L'Opening Range 09:30-09:45 doit confirmer le biais H1")
 
     with st.expander("Advanced Filters"):
@@ -1701,13 +1701,13 @@ risk = |entry_price - stop_loss|
 - Desormais, le trade ne peut plus etre perdant (sauf gap)
 
 **11b. Trailing Stop (Securisation des profits)** :
-- **Declenchement** : Quand le prix bouge de **0.5R** en faveur (meme seuil que BE)
+- **Declenchement** : Quand le prix bouge de **0.3R** en faveur (plus tot que le BE pour maximiser les wins)
 - **Fonctionnement** :
   - Le SL suit le meilleur prix atteint, a une distance de **30% du risque initial**
   - BUY : `trailing_SL = best_high - (risk x 30%)`
   - SELL : `trailing_SL = best_low + (risk x 30%)`
   - Le trailing SL ne peut que se rapprocher du prix (jamais reculer)
-- **Interaction BE / Trailing** : Le trailing stop a priorite sur le breakeven. Si les deux ont le meme seuil de declenchement (0.5R), le trailing prend le relais et le BE ne s'applique plus. Le SL final est toujours le plus favorable des deux.
+- **Interaction BE / Trailing** : Le trailing stop a priorite sur le breakeven. Avec un seuil de 0.3R, le trailing se declenche avant le BE (0.5R) et prend le relais. Le SL final est toujours le plus favorable des deux.
 
 **11c. Sortie de fin de journee (EOD)** :
 - Si ni le TP ni le SL n'est touche avant la fin de la session
@@ -1729,11 +1729,11 @@ risk = |entry_price - stop_loss|
 
 | Regle | Valeur par defaut |
 |-------|------------------|
-| Max trades par jour | **1** |
+| Max trades par jour | **2** |
 | Cooldown entre trades | **10 minutes** |
 | Chaque IFVG utilise une seule fois | Oui |
-| Killzone | **09:30 - 11:00 ET** |
-| Entrees a partir de | **10:05 ET** |
+| Killzone | **09:30 - 12:00 ET** |
+| Entrees a partir de | **10:00 ET** |
 | Stop apres perte | **Oui** |
 
 **Logique du cooldown** : Apres chaque trade (gagnant ou perdant), attendre au minimum 10 minutes avant de chercher une nouvelle entree. Empeche les entrees emotionnelles consecutives.
@@ -1772,7 +1772,7 @@ risk = |entry_price - stop_loss|
 **Condition** :
 - La direction de l'Opening Range doit etre **identique** au biais H1
 - Si l'OR va dans le sens contraire du biais H1 → **pas de trade ce jour-la**
-- Active par defaut (`use_opening_range_filter = True`)
+- Desactive par defaut (`use_opening_range_filter = False`) — trop restrictif pour la frequence cible de ~3 trades/semaine
 
 **Logique** :
 - L'Opening Range capture l'intention initiale des participants institutionnels
@@ -1802,10 +1802,10 @@ CONSTRUCTION DU SIGNAL (M15)
 [10] Detecter les inversions (close au-dela du FVG, dans le sens du biais H1)
 [11] Appliquer filtres optionnels (confluence, liquidity sweep)
 
-ENTREE (M1 — a partir de 10:05 ET)
+ENTREE (M1 — a partir de 10:00 ET)
 ================================
-[12] Verifier filtre Opening Range (direction OR = biais H1)
-[13] Scanner chaque bougie M1 dans la killzone
+[12] Verifier filtre Opening Range si active (direction OR = biais H1)
+[13] Scanner chaque bougie M1 dans la killzone (09:30-12:00 ET)
 [14] Verifier retracement dans la zone IFVG (penetration >= 60%)
 [15] Valider la bougie de confirmation M1 (corps significatif + rejet)
 [16] Calculer entry/SL/TP et verifier que le risque est entre 5-25 pts
@@ -1813,7 +1813,7 @@ ENTREE (M1 — a partir de 10:05 ET)
 GESTION DU TRADE
 ================================
 [17] Surveiller barre par barre : SL → TP → trailing → breakeven → EOD
-[18] Respecter max 1 trade/jour et cooldown 10 min
+[18] Respecter max 2 trades/jour et cooldown 10 min
 [19] Stop apres perte : arreter si premier trade est un LOSS
 ```
 """)
@@ -1823,23 +1823,23 @@ GESTION DU TRADE
         if config_used:
             param_display = {
                 'Taille min FVG': f"{config_used.get('min_fvg_size', 3.0)} pts",
-                'Age max FVG (barres M15)': f"{config_used.get('max_fvg_age_m15', 8)}",
+                'Age max FVG (barres M15)': f"{config_used.get('max_fvg_age_m15', 12)}",
                 'R:R cible': f"{config_used.get('rr_target', 1.2)}",
                 'Risque max': f"{config_used.get('max_risk_pts', 25.0)} pts",
                 'Risque min': f"{config_used.get('min_risk_pts', 5.0)} pts",
-                'Max trades/jour': f"{config_used.get('max_trades_per_day', 1)}",
-                'Killzone': f"{config_used.get('killzone_start', '09:30')} - {config_used.get('killzone_end', '11:00')} ET",
-                'Debut des entrees': f"{config_used.get('entry_start_time', '10:05')} ET",
+                'Max trades/jour': f"{config_used.get('max_trades_per_day', 2)}",
+                'Killzone': f"{config_used.get('killzone_start', '09:30')} - {config_used.get('killzone_end', '12:00')} ET",
+                'Debut des entrees': f"{config_used.get('entry_start_time', '10:00')} ET",
                 'Cooldown': f"{config_used.get('cooldown_minutes', 10)} min",
                 'Retracement': f"{config_used.get('retracement_pct', 60)}%",
                 'Breakeven trigger': f"{config_used.get('be_trigger_rr', 0.5)}R",
-                'Trailing trigger': f"{config_used.get('trail_trigger_rr', 0.5)}R",
+                'Trailing trigger': f"{config_used.get('trail_trigger_rr', 0.3)}R",
                 'Trailing offset': f"{config_used.get('trail_offset_pct', 30)}%",
                 'Displacement body min': f"{config_used.get('min_displacement_body_pct', 55)}%",
                 'Displacement taille min': f"{config_used.get('min_displacement_size', 3.5)} pts",
                 'Mode target': config_used.get('target_mode', 'fixed_rr'),
                 'Stop apres perte': 'Oui' if config_used.get('use_stop_after_loss', True) else 'Non',
-                'Filtre Opening Range': 'Oui' if config_used.get('use_opening_range_filter', True) else 'Non',
+                'Filtre Opening Range': 'Oui' if config_used.get('use_opening_range_filter', False) else 'Non',
                 'Valeur du point': f"${config_used.get('contract_value', 2.0):.2f}",
             }
             pc1, pc2 = st.columns(2)

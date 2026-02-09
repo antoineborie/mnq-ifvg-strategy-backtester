@@ -7,24 +7,24 @@ from ifvg_strategy import IFVGStrategy
 
 PARAM_GRID = {
     'min_fvg_size': [3.0, 3.5, 4.0],
-    'max_fvg_age_m15': [6, 8, 10, 12],
+    'max_fvg_age_m15': [8, 10, 12, 15],
     'rr_target': [1.0, 1.2, 1.5],
     'max_trades_per_day': [1, 2],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
     'max_risk_pts': [20.0, 25.0],
     'be_trigger_rr': [0.5, 0.6],
-    'trail_trigger_rr': [0.5, 0.6],
-    'trail_offset_pct': [25, 30],
+    'trail_trigger_rr': [0.3, 0.4, 0.5],
+    'trail_offset_pct': [25, 30, 35],
     'min_displacement_body_pct': [55, 60, 65],
     'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['10:00', '10:05', '10:10'],
+    'entry_start_time': ['09:50', '10:00', '10:05'],
     'cooldown_minutes': [10],
 }
 
 FIXED_PARAMS = {
     'killzone_start': '09:30',
-    'killzone_end': '11:00',
+    'killzone_end': '12:00',
     'use_be': True,
     'contract_value': 2.0,
     'target_mode': 'fixed_rr',
@@ -40,23 +40,23 @@ FIXED_PARAMS = {
     'use_m1_momentum': False,
     'use_day_filter': False,
     'use_stop_after_loss': True,
-    'use_opening_range_filter': True,
+    'use_opening_range_filter': False,
 }
 
 QUICK_PARAM_GRID = {
     'min_fvg_size': [3.0, 4.0],
-    'max_fvg_age_m15': [8, 10],
+    'max_fvg_age_m15': [10, 12],
     'rr_target': [1.0, 1.2, 1.5],
-    'max_trades_per_day': [1],
+    'max_trades_per_day': [2],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
     'max_risk_pts': [25.0],
     'be_trigger_rr': [0.5],
-    'trail_trigger_rr': [0.5],
+    'trail_trigger_rr': [0.3],
     'trail_offset_pct': [30],
     'min_displacement_body_pct': [55, 60],
     'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['10:05'],
+    'entry_start_time': ['10:00'],
     'cooldown_minutes': [10],
 }
 
@@ -86,7 +86,7 @@ def _precompute_days(df_utc):
         if len(day_data) < 30:
             continue
 
-        killzone_m1 = day_data.between_time('09:30', '11:00')
+        killzone_m1 = day_data.between_time(FIXED_PARAMS.get('killzone_start', '09:30'), FIXED_PARAMS.get('killzone_end', '12:00'))
         if len(killzone_m1) < 5:
             continue
 

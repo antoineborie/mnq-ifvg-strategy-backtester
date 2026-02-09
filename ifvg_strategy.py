@@ -6,13 +6,13 @@ class IFVGStrategy:
     def __init__(self, config=None):
         defaults = {
             'min_fvg_size': 3.0,
-            'max_fvg_age_m15': 8,
+            'max_fvg_age_m15': 12,
             'rr_target': 1.2,
             'max_risk_pts': 25.0,
             'min_risk_pts': 5.0,
-            'max_trades_per_day': 1,
+            'max_trades_per_day': 2,
             'killzone_start': '09:30',
-            'killzone_end': '11:00',
+            'killzone_end': '12:00',
             'use_be': True,
             'be_trigger_rr': 0.5,
             'cooldown_minutes': 10,
@@ -38,9 +38,9 @@ class IFVGStrategy:
             'min_prev_day_range': 60.0,
             'max_prev_day_range': 400.0,
             'use_trailing_stop': True,
-            'trail_trigger_rr': 0.5,
+            'trail_trigger_rr': 0.3,
             'trail_offset_pct': 30,
-            'entry_start_time': '10:05',
+            'entry_start_time': '10:00',
             'use_m1_momentum': False,
             'momentum_bars': 5,
             'momentum_min_score': 3,
@@ -63,7 +63,7 @@ class IFVGStrategy:
             'use_multi_confirm': False,
             'confirm_require_wick_rejection': True,
             'confirm_require_body_ratio': 40,
-            'use_opening_range_filter': True,
+            'use_opening_range_filter': False,
             'opening_range_bias_only': True,
         }
         self.config = {**defaults, **(config or {})}
