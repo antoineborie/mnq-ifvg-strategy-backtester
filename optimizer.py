@@ -41,6 +41,7 @@ FIXED_PARAMS = {
     'use_day_filter': False,
     'use_stop_after_loss': True,
     'use_opening_range_filter': False,
+    'partial_tp_pct': 60,
 }
 
 QUICK_PARAM_GRID = {
@@ -252,6 +253,7 @@ def _run_fast_backtest(precomputed_days, config):
     use_trail = config.get('use_trailing_stop', True)
     trail_trigger = config.get('trail_trigger_rr', 0.5)
     trail_offset_pct = config.get('trail_offset_pct', 30) / 100.0
+    partial_tp_pct = config.get('partial_tp_pct', 60)
 
     use_disp = config.get('use_displacement_filter', True)
     min_disp_body = config.get('min_displacement_body_pct', 55) / 100.0
@@ -399,7 +401,8 @@ def _run_fast_backtest(precomputed_days, config):
                 result_label, exit_price, exit_time, pnl_pts = _sim_trade_fast(
                     rem_h, rem_l, rem_c, rem_t, start_j,
                     entry_price, tp_price, sl_price, direction, risk,
-                    use_be, be_trigger, use_trail, trail_trigger, trail_offset_pct
+                    use_be, be_trigger, use_trail, trail_trigger, trail_offset_pct,
+                    partial_tp_pct
                 )
 
                 trades.append({
@@ -428,7 +431,8 @@ def _run_fast_backtest(precomputed_days, config):
 
 
 def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction, risk,
-                    use_be, be_trigger, use_trail=True, trail_trigger=0.5, trail_offset_pct=0.3):
+                    use_be, be_trigger, use_trail=True, trail_trigger=0.5, trail_offset_pct=0.3,
+                    partial_tp_pct=60):
     current_sl = sl
     be_activated = False
     trail_activated = False
@@ -436,6 +440,14 @@ def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction,
 
     be_level = entry + (risk * be_trigger) if direction == 'BUY' else entry - (risk * be_trigger)
     trail_level = entry + (risk * trail_trigger) if direction == 'BUY' else entry - (risk * trail_trigger)
+
+    partial_ratio = partial_tp_pct / 100.0
+    tp_distance = abs(tp - entry)
+    partial_tp_threshold = tp_distance * partial_ratio
+    if direction == 'BUY':
+        partial_tp_level = entry + partial_tp_threshold
+    else:
+        partial_tp_level = entry - partial_tp_threshold
 
     for i in range(start, len(highs)):
         h, l, c = highs[i], lows[i], closes[i]
@@ -446,10 +458,19 @@ def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction,
 
             if l <= current_sl:
                 pnl = current_sl - entry
-                label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
+                if pnl >= partial_tp_threshold:
+                    label = 'WIN'
+                elif pnl > 0:
+                    label = 'BE'
+                else:
+                    label = 'LOSS'
                 return label, current_sl, times[i], pnl
             if h >= tp:
                 return 'WIN', tp, times[i], tp - entry
+
+            if h >= partial_tp_level:
+                pnl = partial_tp_level - entry
+                return 'WIN', partial_tp_level, times[i], pnl
 
             if use_trail and h >= trail_level:
                 trail_activated = True
@@ -467,10 +488,19 @@ def _sim_trade_fast(highs, lows, closes, times, start, entry, tp, sl, direction,
 
             if h >= current_sl:
                 pnl = entry - current_sl
-                label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
+                if pnl >= partial_tp_threshold:
+                    label = 'WIN'
+                elif pnl > 0:
+                    label = 'BE'
+                else:
+                    label = 'LOSS'
                 return label, current_sl, times[i], pnl
             if l <= tp:
                 return 'WIN', tp, times[i], entry - tp
+
+            if l <= partial_tp_level:
+                pnl = entry - partial_tp_level
+                return 'WIN', partial_tp_level, times[i], pnl
 
             if use_trail and l <= trail_level:
                 trail_activated = True
@@ -509,7 +539,8 @@ def _build_metrics(trades_list, contract_val=2.0):
     wins = sum(1 for r in results if r == 'WIN')
     losses = sum(1 for r in results if r == 'LOSS')
     bes = sum(1 for r in results if r == 'BE')
-    win_rate = (wins / total * 100) if total > 0 else 0
+    decisive = wins + losses
+    win_rate = (wins / decisive * 100) if decisive > 0 else 0
     total_pnl = float(pnls.sum())
 
     gross_profit = float(pnls[pnls > 0].sum())
@@ -557,7 +588,7 @@ def _build_metrics(trades_list, contract_val=2.0):
     calmar = total_pnl / abs(max_dd) if max_dd != 0 else 0
 
     monthly_wrs = _compute_monthly_win_rates(trades_list)
-    qualified_months = [wr for wr in monthly_wrs if wr['trades'] >= 3]
+    qualified_months = [wr for wr in monthly_wrs if wr['decisive'] >= 3]
     if qualified_months:
         wr_values = [m['win_rate'] for m in qualified_months]
         months_below_60 = sum(1 for wr in wr_values if wr < 60)
@@ -605,15 +636,18 @@ def _compute_monthly_win_rates(trades_list):
         else:
             ym = str(et)[:7]
         if ym not in monthly:
-            monthly[ym] = {'wins': 0, 'total': 0}
+            monthly[ym] = {'wins': 0, 'losses': 0, 'total': 0}
         monthly[ym]['total'] += 1
         if t['result'] == 'WIN':
             monthly[ym]['wins'] += 1
+        elif t['result'] == 'LOSS':
+            monthly[ym]['losses'] += 1
 
     result = []
     for ym, counts in sorted(monthly.items()):
-        wr = (counts['wins'] / counts['total'] * 100) if counts['total'] > 0 else 0
-        result.append({'month': ym, 'trades': counts['total'], 'wins': counts['wins'], 'win_rate': round(wr, 1)})
+        decisive = counts['wins'] + counts['losses']
+        wr = (counts['wins'] / decisive * 100) if decisive > 0 else 0
+        result.append({'month': ym, 'trades': counts['total'], 'decisive': decisive, 'wins': counts['wins'], 'losses': counts['losses'], 'win_rate': round(wr, 1)})
     return result
 
 

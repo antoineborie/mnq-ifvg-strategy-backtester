@@ -52,18 +52,24 @@ def _empty_results():
 def _cohort_analysis(df, is_win):
     total = len(df)
     wins = is_win.sum()
-    global_wr = round(wins / total * 100, 2) if total > 0 else 0
+    losses = (df['result'] == 'LOSS').sum()
+    decisive = wins + losses
+    global_wr = round(wins / decisive * 100, 2) if decisive > 0 else 0
 
     yearly_groups = df.groupby('year')
     yearly_data = []
     for year, g in yearly_groups:
         n = len(g)
         w = (g['result'] == 'WIN').sum()
+        l = (g['result'] == 'LOSS').sum()
+        d = w + l
         yearly_data.append({
             'year': year,
             'trades': n,
             'wins': int(w),
-            'win_rate': round(w / n * 100, 2) if n > 0 else 0,
+            'losses': int(l),
+            'decisive': int(d),
+            'win_rate': round(w / d * 100, 2) if d > 0 else 0,
             'pnl': round(float(g['pnl_pts'].sum()), 2),
             'avg_pnl': round(float(g['pnl_pts'].mean()), 2),
         })
@@ -74,11 +80,15 @@ def _cohort_analysis(df, is_win):
     for ym, g in monthly_groups:
         n = len(g)
         w = (g['result'] == 'WIN').sum()
+        l = (g['result'] == 'LOSS').sum()
+        d = w + l
         monthly_data.append({
             'year_month': ym,
             'trades': n,
             'wins': int(w),
-            'win_rate': round(w / n * 100, 2) if n > 0 else 0,
+            'losses': int(l),
+            'decisive': int(d),
+            'win_rate': round(w / d * 100, 2) if d > 0 else 0,
             'pnl': round(float(g['pnl_pts'].sum()), 2),
         })
     monthly = pd.DataFrame(monthly_data)
@@ -88,11 +98,15 @@ def _cohort_analysis(df, is_win):
     for dow, g in dow_groups:
         n = len(g)
         w = (g['result'] == 'WIN').sum()
+        l = (g['result'] == 'LOSS').sum()
+        d = w + l
         dow_data.append({
             'day_of_week': dow,
             'trades': n,
             'wins': int(w),
-            'win_rate': round(w / n * 100, 2) if n > 0 else 0,
+            'losses': int(l),
+            'decisive': int(d),
+            'win_rate': round(w / d * 100, 2) if d > 0 else 0,
             'pnl': round(float(g['pnl_pts'].sum()), 2),
         })
     by_dow = pd.DataFrame(dow_data)
@@ -108,7 +122,7 @@ def _cohort_analysis(df, is_win):
     monthly_wrs = monthly['win_rate'].values
     wr_stability = round(float(np.std(monthly_wrs)), 2) if len(monthly_wrs) > 1 else 0
 
-    qualified_monthly = monthly[monthly['trades'] >= 3]
+    qualified_monthly = monthly[monthly['decisive'] >= 3]
     q_wrs = qualified_monthly['win_rate'].values if len(qualified_monthly) > 0 else np.array([])
 
     months_below_60 = int((q_wrs < 60).sum()) if len(q_wrs) > 0 else 0
@@ -155,14 +169,16 @@ def _robustness_analysis(df, is_win):
 
     expectancy = round(float(pnl.mean()), 3) if total > 0 else 0
 
-    wins_arr = is_win.astype(int).values
-    n = len(wins_arr)
-    n_wins = int(wins_arr.sum())
+    is_decisive = df['result'].isin(['WIN', 'LOSS'])
+    decisive_df = df[is_decisive]
+    decisive_wins = (decisive_df['result'] == 'WIN').astype(int).values
+    n = len(decisive_wins)
+    n_wins = int(decisive_wins.sum())
     n_losses = n - n_wins
 
     runs = 1
     for i in range(1, n):
-        if wins_arr[i] != wins_arr[i - 1]:
+        if decisive_wins[i] != decisive_wins[i - 1]:
             runs += 1
 
     expected_runs = 0.0
@@ -191,7 +207,8 @@ def _robustness_analysis(df, is_win):
     kelly_fraction = 0
     avg_win = float(pnl[pnl > 0].mean()) if (pnl > 0).any() else 0
     avg_loss_abs = float(abs(pnl[pnl < 0].mean())) if (pnl < 0).any() else 1
-    win_rate_dec = n_wins / n if n > 0 else 0
+    n_decisive = n_wins + n_losses
+    win_rate_dec = n_wins / n_decisive if n_decisive > 0 else 0
     if avg_loss_abs > 0:
         b = avg_win / avg_loss_abs
         kelly_fraction = round((win_rate_dec * b - (1 - win_rate_dec)) / b, 4) if b > 0 else 0
@@ -326,7 +343,8 @@ def _risk_reward_analysis(df, is_win):
 
     breakeven_wr = round(1 / (1 + real_rr_ratio) * 100, 2) if real_rr_ratio > 0 else 50.0
 
-    observed_wr = round(is_win.sum() / total * 100, 2)
+    decisive = is_win.sum() + len(losses_df)
+    observed_wr = round(is_win.sum() / decisive * 100, 2) if decisive > 0 else 0
 
     edge = round(observed_wr - breakeven_wr, 2)
 
@@ -340,8 +358,8 @@ def _risk_reward_analysis(df, is_win):
         risk_std = 0
 
     expectancy_r = 0
-    if total > 0 and avg_loss_pts > 0:
-        win_pct = is_win.sum() / total
+    if decisive > 0 and avg_loss_pts > 0:
+        win_pct = is_win.sum() / decisive
         loss_pct = 1 - win_pct
         expectancy_r = round(win_pct * real_rr_ratio - loss_pct, 3)
 

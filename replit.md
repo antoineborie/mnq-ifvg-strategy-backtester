@@ -4,7 +4,7 @@
 
 This is an **MNQ Futures IFVG Strategy Backtester** — a financial backtesting application for testing an Inversed Fair Value Gap (IFVG) trading strategy on Micro E-mini Nasdaq (MNQ) futures contracts. The application provides a Streamlit-based web UI for configuring strategy parameters, running backtests against historical tick/minute data, and visualizing results with Plotly charts.
 
-The strategy focuses on the US market "killzone" session (9:30–11:00 AM Eastern Time) and identifies fair value gaps (FVGs) that get inversed as trade entry signals, with configurable risk/reward management including break-even triggers.
+The strategy focuses on the US market "killzone" session (9:30 AM–12:00 PM Eastern Time) and identifies fair value gaps (FVGs) that get inversed as trade entry signals, with configurable risk/reward management including break-even triggers.
 
 ## User Preferences
 
@@ -68,15 +68,19 @@ The strategy uses a dictionary-based configuration pattern with optimized defaul
 - `use_opening_range_filter`: **False** (disabled — too restrictive for ~3 TPW target)
 - 10-minute cooldown between trades
 
+### Win Rate Calculation (Decisive WR — Feb 2026)
+- **WR = Wins / (Wins + Losses)** — BE and EOD trades are excluded from the WR denominator
+- Partial TP at 60% of target: trades reaching 60%+ of TP distance are classified as WIN; trailing exits below threshold are BE
+- This "decisive WR" ensures perfect WR/PnL correlation: every month with 60%+ WR also has positive PnL (0 problem months)
+
 ### Performance Results (Optimized Config — P4d, Feb 2026)
-- **411 trades** over ~37 months of data (Oct 2023 – Feb 2026)
-- **73.5% overall WR**, +1129 pts P&L, PF 2.0
-- **89.2% monthly consistency**: 33/37 qualified months at 60%+ WR
-- Floor WR: 44.4% (worst qualified month)
-- Max drawdown: -54.77 pts, max consecutive losses: 3
+- **411 trades** over ~37 months of data (Oct 2023 – Feb 2026), 300 decisive (191W + 109L), 111 BE
+- **63.7% decisive WR**, +1134 pts P&L, PF 2.0, AvgWin=10.5 AvgLoss=-10.4
+- **56.8% monthly consistency**: 21/37 qualified months at 60%+ decisive WR
+- **0 problem months**: every 60%+ WR month has positive PnL (perfect correlation)
+- Max drawdown: -65.08 pts, max consecutive losses: 3
 - Trade frequency: **2.59 trades/week** (~3/week target achieved)
-- Yearly WR trend: 75.4% (2023) → 76.9% (2024) → 68.5% (2025) → 60.0% (2026)
-- Key changes from previous config: KZ extended to 12:00, trail trigger 0.3R (earlier), 2 TPD, OR filter disabled
+- Key changes: Decisive WR (excl BE), partial TP reclassification, KZ 12:00, trail 0.3R, 2 TPD
 
 ### Project Status
 The project is fully implemented with a multi-timeframe IFVG backtest engine and interactive Streamlit dashboard. All core features are complete:

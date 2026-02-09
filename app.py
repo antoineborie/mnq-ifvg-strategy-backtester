@@ -254,6 +254,10 @@ with st.sidebar:
     use_stop_after_loss = st.checkbox("Stop Apres Perte", value=True,
                                        help="Arreter de trader pour la journee apres la premiere perte")
 
+    st.subheader("Prise de Profit Partielle")
+    partial_tp_pct = st.slider("TP Partiel (%)", 30, 100, 60, 5,
+                                help="Fermer le trade en WIN quand le prix atteint ce % du TP total. Ex: 60% = prendre le profit a 60% du TP cible.")
+
     st.subheader("Trailing Stop")
     use_trail = st.checkbox("Trailing Stop", value=True)
     if use_trail:
@@ -341,6 +345,7 @@ if run_button:
         'cooldown_minutes': cooldown,
         'structure_lookback_days': structure_lookback,
         'entry_start_time': entry_start_time,
+        'partial_tp_pct': partial_tp_pct,
         'use_trailing_stop': use_trail,
         'trail_trigger_rr': trail_trigger,
         'trail_offset_pct': trail_offset,
@@ -517,9 +522,9 @@ if 'results' in st.session_state:
         ]
 
         display_cols = [
-            'entry_time', 'direction', 'result', 'entry', 'sl', 'tp',
+            'entry_time', 'direction', 'result', 'entry', 'sl', 'tp', 'tp_partial',
             'exit_price', 'risk_pts', 'pnl_pts', 'pnl_dollars', 'rr_achieved',
-            'fvg_size', 'h1_bias', 'target_mode'
+            'tp_pct_reached', 'fvg_size', 'h1_bias', 'target_mode'
         ]
         available_cols = [c for c in display_cols if c in filtered.columns]
 
@@ -617,7 +622,9 @@ if 'results' in st.session_state:
                 avg_pnl=('pnl_pts', 'mean'),
                 wins=('result', lambda x: (x == 'WIN').sum()),
             ).reset_index()
-            dir_stats['win_rate'] = (dir_stats['wins'] / dir_stats['count'] * 100).round(1)
+            dir_stats['losses'] = dir_stats.apply(lambda r: (trades_df[trades_df['direction']==r['direction']]['result']=='LOSS').sum(), axis=1)
+            dir_stats['decisive'] = dir_stats['wins'] + dir_stats['losses']
+            dir_stats['win_rate'] = (dir_stats['wins'] / dir_stats['decisive'] * 100).where(dir_stats['decisive'] > 0, 0).round(1)
             st.dataframe(dir_stats, use_container_width=True)
 
     with tab4:
@@ -639,11 +646,14 @@ if 'results' in st.session_state:
             monthly_grp = trades_df.groupby('year_month').agg(
                 trades=('pnl_pts', 'count'),
                 wins=('result', lambda x: (x == 'WIN').sum()),
+                losses=('result', lambda x: (x == 'LOSS').sum()),
+                bes=('result', lambda x: (x == 'BE').sum()),
                 pnl=('pnl_pts', 'sum'),
             ).reset_index()
-            monthly_grp['win_rate'] = (monthly_grp['wins'] / monthly_grp['trades'] * 100).round(1)
+            monthly_grp['decisive'] = monthly_grp['wins'] + monthly_grp['losses']
+            monthly_grp['win_rate'] = (monthly_grp['wins'] / monthly_grp['decisive'] * 100).where(monthly_grp['decisive'] > 0, 0).round(1)
 
-            qualified = monthly_grp[monthly_grp['trades'] >= 3]
+            qualified = monthly_grp[monthly_grp['decisive'] >= 3]
             q_wrs = qualified['win_rate'].values if len(qualified) > 0 else np.array([])
             months_at_target = int((q_wrs >= 60).sum()) if len(q_wrs) > 0 else 0
             months_below_60 = int((q_wrs < 60).sum()) if len(q_wrs) > 0 else 0
@@ -1111,8 +1121,10 @@ if 'results' in st.session_state:
             trades=('pnl_pts', 'count'),
             pnl=('pnl_pts', 'sum'),
             wins=('result', lambda x: (x == 'WIN').sum()),
+            losses=('result', lambda x: (x == 'LOSS').sum()),
         ).reset_index()
-        daily['win_rate'] = (daily['wins'] / daily['trades'] * 100).round(1)
+        daily['decisive'] = daily['wins'] + daily['losses']
+        daily['win_rate'] = (daily['wins'] / daily['decisive'] * 100).where(daily['decisive'] > 0, 0).round(1)
         daily['cum_pnl'] = daily['pnl'].cumsum()
 
         fig_daily = make_subplots(
@@ -1692,34 +1704,43 @@ risk = |entry_price - stop_loss|
         st.markdown("""
 **Objectif** : Proteger le capital et securiser les profits en cours de trade.
 
-**11a. Breakeven (Protection du capital)** :
+**11a. Prise de Profit Partielle (TP Partiel)** :
+- **Principe** : Le trade est ferme en WIN des que le prix atteint **60%** du TP total
+  - BUY : high atteint `entry + (distance_TP x 60%)`
+  - SELL : low atteint `entry - (distance_TP x 60%)`
+- **Avantage** : Garantit un profit significatif a chaque WIN (minimum 60% du TP cible)
+- **Correlation WR/PnL** : Avec un WR de 60% et un gain garanti de 60% du TP, le PnL est mathematiquement positif
+- **Calcul** : Avec RR 1.2 → gain par WIN = 0.6 x 1.2R = 0.72R, perte = 1R. EV a 60% WR = +0.03R/trade
+- **Configurable** : Le % est ajustable via le slider "TP Partiel" (30-100%)
+
+**11b. Breakeven (Protection du capital)** :
 - **Declenchement** : Quand le prix bouge de **0.5R** en faveur du trade
   - BUY : high atteint `entry + (risk x 0.5)`
   - SELL : low atteint `entry - (risk x 0.5)`
 - **Action** : Le stop loss est deplace a `entry +/- 1 point` (breakeven + 1 pt pour couvrir les frais)
-- **Important** : Le breakeven ne s'active que si le **trailing stop n'est pas deja actif**. Si le trailing est declenche en premier, c'est lui qui gere le SL.
+- **Important** : Le breakeven ne s'active que si le **trailing stop n'est pas deja actif**
 - Desormais, le trade ne peut plus etre perdant (sauf gap)
 
-**11b. Trailing Stop (Securisation des profits)** :
-- **Declenchement** : Quand le prix bouge de **0.3R** en faveur (plus tot que le BE pour maximiser les wins)
+**11c. Trailing Stop (Securisation supplementaire)** :
+- **Declenchement** : Quand le prix bouge de **0.3R** en faveur
+- **Note** : Avec le TP partiel a 60%, le trailing stop sert de filet de securite supplementaire. La plupart des trades se ferment au TP partiel avant que le trailing ne soit necessaire.
 - **Fonctionnement** :
   - Le SL suit le meilleur prix atteint, a une distance de **30% du risque initial**
   - BUY : `trailing_SL = best_high - (risk x 30%)`
   - SELL : `trailing_SL = best_low + (risk x 30%)`
-  - Le trailing SL ne peut que se rapprocher du prix (jamais reculer)
-- **Interaction BE / Trailing** : Le trailing stop a priorite sur le breakeven. Avec un seuil de 0.3R, le trailing se declenche avant le BE (0.5R) et prend le relais. Le SL final est toujours le plus favorable des deux.
 
-**11c. Sortie de fin de journee (EOD)** :
+**11d. Sortie de fin de journee (EOD)** :
 - Si ni le TP ni le SL n'est touche avant la fin de la session
 - Le trade est ferme au **dernier close disponible**
 - Resultat marque comme "EOD" (End Of Day)
 
 **Priorite de sortie** (evaluee barre par barre) :
 1. Stop Loss touche → sortie immediate
-2. Take Profit touche → sortie immediate
-3. Mise a jour trailing stop → ajustement du SL
-4. Activation breakeven → ajustement du SL
-5. Fin de journee → sortie forcee
+2. Take Profit complet (100%) touche → WIN
+3. TP Partiel (60%) touche → WIN
+4. Mise a jour trailing stop → ajustement du SL
+5. Activation breakeven → ajustement du SL
+6. Fin de journee → sortie forcee
 """)
 
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
@@ -1833,6 +1854,7 @@ GESTION DU TRADE
                 'Cooldown': f"{config_used.get('cooldown_minutes', 10)} min",
                 'Retracement': f"{config_used.get('retracement_pct', 60)}%",
                 'Breakeven trigger': f"{config_used.get('be_trigger_rr', 0.5)}R",
+                'TP Partiel': f"{config_used.get('partial_tp_pct', 60)}%",
                 'Trailing trigger': f"{config_used.get('trail_trigger_rr', 0.3)}R",
                 'Trailing offset': f"{config_used.get('trail_offset_pct', 30)}%",
                 'Displacement body min': f"{config_used.get('min_displacement_body_pct', 55)}%",

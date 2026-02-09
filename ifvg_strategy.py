@@ -65,6 +65,7 @@ class IFVGStrategy:
             'confirm_require_body_ratio': 40,
             'use_opening_range_filter': False,
             'opening_range_bias_only': True,
+            'partial_tp_pct': 60,
         }
         self.config = {**defaults, **(config or {})}
         self.trades = []
@@ -869,6 +870,7 @@ class IFVGStrategy:
         use_trail = cfg.get('use_trailing_stop', False)
         trail_trigger = cfg.get('trail_trigger_rr', 1.0)
         trail_offset_pct = cfg.get('trail_offset_pct', 50) / 100.0
+        partial_tp_pct = cfg.get('partial_tp_pct', 60)
 
         entry_price = entry_bar['close']
 
@@ -898,10 +900,15 @@ class IFVGStrategy:
 
         result, exit_price, exit_time, pnl_pts = self._simulate_trade(
             future_data, entry_price, tp_price, sl_price, direction, risk,
-            use_be, be_trigger, use_trail, trail_trigger, trail_offset_pct
+            use_be, be_trigger, use_trail, trail_trigger, trail_offset_pct,
+            partial_tp_pct
         )
 
         pnl_dollars = pnl_pts * contract_val
+
+        tp_full_distance = abs(tp_price - entry_price)
+        partial_tp_level = entry_price + (tp_full_distance * partial_tp_pct / 100.0) if direction == 'BUY' else entry_price - (tp_full_distance * partial_tp_pct / 100.0)
+        tp_pct_reached = round(abs(exit_price - entry_price) / tp_full_distance * 100, 1) if tp_full_distance > 0 else 0
 
         return {
             'entry_time': entry_time,
@@ -910,12 +917,14 @@ class IFVGStrategy:
             'entry': round(entry_price, 2),
             'sl': round(sl_price, 2),
             'tp': round(tp_price, 2),
+            'tp_partial': round(partial_tp_level, 2),
             'exit_price': round(exit_price, 2),
             'risk_pts': round(risk, 2),
             'pnl_pts': round(pnl_pts, 2),
             'pnl_dollars': round(pnl_dollars, 2),
             'result': result,
             'rr_achieved': round(pnl_pts / risk, 2) if risk > 0 else 0,
+            'tp_pct_reached': tp_pct_reached,
             'fvg_size': round(signal['fvg_size'], 2),
             'h1_bias': direction,
             'target_mode': target_mode,
@@ -947,7 +956,8 @@ class IFVGStrategy:
             return entry_price + (risk * self.config['rr_target'])
 
     def _simulate_trade(self, future_data, entry, tp, sl, direction, risk,
-                        use_be, be_trigger, use_trail=False, trail_trigger=1.0, trail_offset_pct=0.5):
+                        use_be, be_trigger, use_trail=False, trail_trigger=1.0, trail_offset_pct=0.5,
+                        partial_tp_pct=60):
         current_sl = sl
         be_activated = False
         trail_activated = False
@@ -964,6 +974,15 @@ class IFVGStrategy:
         trail_level_buy = entry + (risk * trail_trigger) if use_trail else None
         trail_level_sell = entry - (risk * trail_trigger) if use_trail else None
 
+        partial_ratio = partial_tp_pct / 100.0
+        tp_distance = abs(tp - entry)
+        partial_tp_threshold = tp_distance * partial_ratio
+
+        if direction == 'BUY':
+            partial_tp_level = entry + partial_tp_threshold
+        else:
+            partial_tp_level = entry - partial_tp_threshold
+
         for i in range(len(future_data)):
             h, l, c = highs[i], lows[i], closes[i]
 
@@ -973,10 +992,19 @@ class IFVGStrategy:
 
                 if l <= current_sl:
                     pnl = current_sl - entry
-                    label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
+                    if pnl >= partial_tp_threshold:
+                        label = 'WIN'
+                    elif pnl > 0:
+                        label = 'BE'
+                    else:
+                        label = 'LOSS'
                     return label, current_sl, times[i], pnl
                 if h >= tp:
                     return 'WIN', tp, times[i], tp - entry
+
+                if h >= partial_tp_level:
+                    pnl = partial_tp_level - entry
+                    return 'WIN', partial_tp_level, times[i], pnl
 
                 if use_trail and trail_level_buy is not None and h >= trail_level_buy:
                     trail_activated = True
@@ -995,10 +1023,19 @@ class IFVGStrategy:
 
                 if h >= current_sl:
                     pnl = entry - current_sl
-                    label = 'BE' if be_activated and abs(pnl) < 2 else ('WIN' if pnl > 0 else 'LOSS')
+                    if pnl >= partial_tp_threshold:
+                        label = 'WIN'
+                    elif pnl > 0:
+                        label = 'BE'
+                    else:
+                        label = 'LOSS'
                     return label, current_sl, times[i], pnl
                 if l <= tp:
                     return 'WIN', tp, times[i], entry - tp
+
+                if l <= partial_tp_level:
+                    pnl = entry - partial_tp_level
+                    return 'WIN', partial_tp_level, times[i], pnl
 
                 if use_trail and trail_level_sell is not None and l <= trail_level_sell:
                     trail_activated = True
@@ -1043,11 +1080,12 @@ class IFVGStrategy:
         bes = len(df[df['result'] == 'BE'])
         eods = len(df[df['result'] == 'EOD'])
 
-        win_rate = (wins / total * 100) if total > 0 else 0
+        decisive = wins + losses
+        win_rate = (wins / decisive * 100) if decisive > 0 else 0
         total_pnl = df['pnl_pts'].sum()
         total_pnl_dollars = df['pnl_dollars'].sum()
-        avg_win = df[df['pnl_pts'] > 0]['pnl_pts'].mean() if wins > 0 else 0
-        avg_loss = df[df['pnl_pts'] < 0]['pnl_pts'].mean() if losses > 0 else 0
+        avg_win = df[df['result'] == 'WIN']['pnl_pts'].mean() if wins > 0 else 0
+        avg_loss = df[df['result'] == 'LOSS']['pnl_pts'].mean() if losses > 0 else 0
         gross_loss = df[df['pnl_pts'] < 0]['pnl_pts'].sum()
         profit_factor = abs(df[df['pnl_pts'] > 0]['pnl_pts'].sum() / gross_loss) if gross_loss != 0 else float('inf')
 
@@ -1097,6 +1135,7 @@ class IFVGStrategy:
             'losses': losses,
             'breakevens': bes,
             'eod_exits': eods,
+            'decisive_trades': decisive,
             'win_rate': round(win_rate, 1),
             'total_pnl_pts': round(total_pnl, 2),
             'total_pnl_dollars': round(total_pnl_dollars, 2),
@@ -1121,7 +1160,7 @@ class IFVGStrategy:
     def _empty_metrics(self):
         keys = [
             'total_trades', 'wins', 'losses', 'breakevens', 'eod_exits',
-            'win_rate', 'total_pnl_pts', 'total_pnl_dollars',
+            'decisive_trades', 'win_rate', 'total_pnl_pts', 'total_pnl_dollars',
             'avg_win_pts', 'avg_loss_pts', 'profit_factor',
             'max_drawdown_pts', 'max_drawdown_dollars', 'avg_rr_on_wins',
             'best_day_pts', 'worst_day_pts', 'avg_daily_pnl',
