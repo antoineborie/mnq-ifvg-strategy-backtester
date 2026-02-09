@@ -6,31 +6,26 @@ from ifvg_strategy import IFVGStrategy
 
 
 PARAM_GRID = {
-    'min_fvg_size': [2.5, 3.0, 3.5, 4.0],
-    'max_fvg_age_m15': [10, 12, 15],
-    'rr_target': [0.8, 1.0, 1.2],
-    'max_trades_per_day': [1, 2],
-    'retracement_pct': [50, 60],
+    'min_fvg_size': [2.0, 3.0, 4.0, 5.0],
+    'max_fvg_age_m15': [8, 12, 15, 20],
+    'rr_target': [1.5, 2.0, 2.5, 3.0],
+    'max_trades_per_day': [1, 2, 3],
+    'retracement_pct': [40, 50, 60],
     'min_risk_pts': [5.0],
-    'max_risk_pts': [20.0, 25.0],
-    'be_trigger_rr': [0.4, 0.5],
-    'trail_trigger_rr': [0.3, 0.5],
-    'trail_offset_pct': [25, 30],
-    'min_displacement_body_pct': [50, 55, 60],
-    'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['10:00', '10:05'],
-    'cooldown_minutes': [10],
+    'max_risk_pts': [20.0, 25.0, 30.0],
+    'entry_start_time': ['09:45', '10:00'],
+    'cooldown_minutes': [5, 10],
 }
 
 FIXED_PARAMS = {
     'killzone_start': '09:30',
     'killzone_end': '12:00',
-    'use_be': True,
+    'use_be': False,
     'contract_value': 2.0,
     'target_mode': 'fixed_rr',
     'structure_lookback_days': 20,
-    'use_trailing_stop': True,
-    'use_displacement_filter': True,
+    'use_trailing_stop': False,
+    'use_displacement_filter': False,
     'use_m1_confirmation': True,
     'use_liquidity_sweep': False,
     'use_structure_confluence': False,
@@ -39,26 +34,21 @@ FIXED_PARAMS = {
     'use_range_filter': False,
     'use_m1_momentum': False,
     'use_day_filter': False,
-    'use_stop_after_loss': True,
+    'use_stop_after_loss': False,
     'use_opening_range_filter': False,
     'partial_tp_pct': 100,
 }
 
 QUICK_PARAM_GRID = {
-    'min_fvg_size': [3.0, 4.0],
-    'max_fvg_age_m15': [12, 15],
-    'rr_target': [0.8, 1.0],
-    'max_trades_per_day': [1],
+    'min_fvg_size': [3.0, 4.0, 5.0],
+    'max_fvg_age_m15': [10, 15, 20],
+    'rr_target': [1.5, 2.0, 2.5],
+    'max_trades_per_day': [1, 2],
     'retracement_pct': [50, 60],
     'min_risk_pts': [5.0],
-    'max_risk_pts': [25.0],
-    'be_trigger_rr': [0.5],
-    'trail_trigger_rr': [0.3],
-    'trail_offset_pct': [25],
-    'min_displacement_body_pct': [55, 60],
-    'min_displacement_size': [3.0, 3.5],
-    'entry_start_time': ['10:00'],
-    'cooldown_minutes': [10],
+    'max_risk_pts': [25.0, 30.0],
+    'entry_start_time': ['09:45', '10:00'],
+    'cooldown_minutes': [5, 10],
 }
 
 
@@ -640,26 +630,37 @@ def _compute_score(metrics):
     tpw = metrics.get('trades_per_week', 0)
     max_loss_streak = metrics['max_consecutive_losses']
 
-    if trades < 20:
+    if trades < 30:
         return -9999
 
     score = 0
-    score += pnl * 0.15
-    score += min(pf, 5) * 35
+
+    score += pnl * 0.20
+    score += min(pf, 5) * 40
     calmar = pnl / dd if dd > 0 else 0
-    score += calmar * 20
+    score += calmar * 15
 
     if wr >= 60:
-        score += wr * 3
+        score += wr * 4
     elif wr >= 55:
-        score += wr * 2
+        score += wr * 2.5
+    elif wr >= 50:
+        score += wr * 1.5
     else:
-        score += wr * 1
+        score -= (60 - wr) * 5
 
-    if 2.0 <= tpw <= 3.5:
-        score += 50
-    elif 1.5 <= tpw <= 4.5:
-        score += 25
+    if 2.5 <= tpw <= 4.0:
+        score += 80
+    elif 2.0 <= tpw <= 5.0:
+        score += 40
+    elif tpw < 2.0:
+        score -= 50
+
+    avg_rr = metrics.get('avg_rr_on_wins', 0)
+    if avg_rr >= 2.0:
+        score += 60
+    elif avg_rr >= 1.5:
+        score += 30
 
     if max_loss_streak <= 3:
         score += 30
@@ -689,18 +690,29 @@ def _compute_score(metrics):
     else:
         score -= months_below * 15
 
-    if wr_std < 8:
-        score += 50
-    elif wr_std < 12:
-        score += 25
-    elif wr_std < 16:
+    if wr_std < 10:
+        score += 40
+    elif wr_std < 15:
+        score += 20
+    elif wr_std < 20:
         score += 5
 
-    if wr_floor >= 60:
-        score += 80
-    elif wr_floor >= 50:
+    if wr_floor >= 55:
+        score += 60
+    elif wr_floor >= 45:
+        score += 25
+    elif wr_floor < 35:
+        score -= 30
+
+    total_months = max(1, trades / max(1, tpw * 4.33)) if tpw > 0 else 25
+    pts_per_month = pnl / total_months
+    if pts_per_month >= 100:
+        score += 100
+    elif pts_per_month >= 75:
+        score += 60
+    elif pts_per_month >= 50:
         score += 30
-    elif wr_floor < 40:
+    elif pts_per_month < 30:
         score -= 30
 
     return round(score, 2)

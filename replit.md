@@ -51,38 +51,39 @@ UI language: French for all user-facing labels, tabs, and documentation within t
 - **No database**: The project uses flat file storage only. There is no SQL database or ORM involved.
 
 ### Strategy Configuration (Optimized Defaults — Feb 2026)
-The strategy uses a dictionary-based configuration pattern with optimized defaults prioritizing **monthly profitability consistency** on 2024/2025 data:
+The strategy uses a dictionary-based configuration pattern with optimized defaults targeting **higher R:R with pure TP/SL** on 2024-2026 data:
 - `min_fvg_size`: 3.0 points minimum gap size
-- `max_fvg_age_m15`: **15 bars** maximum gap age (more opportunity window)
-- `rr_target`: **0.8** risk-to-reward ratio (lower target = higher TP hit rate)
+- `max_fvg_age_m15`: **15 bars** maximum gap age
+- `rr_target`: **2.0** risk-to-reward ratio (bigger targets, lets trade breathe)
 - `max_risk_pts` / `min_risk_pts`: 25.0 / 5.0 points risk bounds
-- `max_trades_per_day`: **1** (selective, quality over quantity)
+- `max_trades_per_day`: **2** (more opportunities)
 - `contract_value`: $2.00 per point (MNQ specification)
-- Break-even trigger at 0.5 RR
-- Trailing stop: trigger at **0.3R**, **25%** offset (tight trailing to protect profits)
-- Displacement filter: 55% body ratio, 3.5 pts minimum
+- Break-even: **OFF** (pure TP/SL, no early exit)
+- Trailing stop: **OFF** (pure fixed targets, maximizes WR at high RR)
+- Displacement filter: **OFF** (too restrictive, reduces trade count without improving WR)
 - M1 confirmation candle required
 - `killzone_end`: **12:00** ET
-- `entry_start_time`: **10:00** ET (avoids early noise)
-- `use_stop_after_loss`: **True** (stops trading after first loss of day)
+- `entry_start_time`: **09:45** ET (earlier entry for more opportunities)
+- `use_stop_after_loss`: **False** (allows multiple trades per day)
 - `use_opening_range_filter`: **False**
-- 10-minute cooldown between trades
+- 5-minute cooldown between trades
+- `retracement_pct`: **50%** (balanced entry depth)
 - **Data scope**: 2024-2026 only (default file selection)
 
 ### Win Rate Calculation (TP-Hit WR — Feb 2026)
 - **WIN = only when Take Profit is actually hit** — no partial TP, no trailing stop wins
 - **WR = Wins / (Wins + Losses)** — BE and EOD trades excluded from WR denominator
-- Trailing stop exits with positive PnL = BE (not WIN)
+- Pure TP/SL mode: no BE or trailing stop, all trades are WIN or LOSS
 - SL hit = LOSS, end-of-day close = EOD
 - This strict definition ensures WR reflects real TP accuracy
 
 ### Performance Results (Optimized Config — Feb 2026, 2024-2026 data)
-- **~230 trades** over 25 months (Jan 2024 – Jan 2026), ~160 decisive (W+L), ~70 BE
-- **~62% WR** (TP-hit only), +487 pts P&L, PF 1.70
-- **80% months profitable** (20/25 months with positive PnL)
-- Max drawdown: ~-54 pts, max consecutive losses: 3
-- Trade frequency: ~1 trade/day on active days
-- Key changes: TP-only WR, RR 0.8, 1 TPD, age 15, trail offset 25%
+- **~397 trades** over 25 months (Jan 2024 – Jan 2026), all decisive (pure TP/SL)
+- **~40% WR** (TP-hit only), +922 pts P&L, PF 1.33
+- **64% months profitable** (16/25 months with positive PnL)
+- Average ~37 pts/month, ~3.7 trades per week
+- Key insight: Pure TP/SL (no BE/trailing) maximizes WR at high RR. BE and trailing convert potential TP hits into early exits, reducing WR.
+- Trade-off: Higher RR (2.0 vs 0.8) = lower WR (40% vs 62%) but bigger wins per trade
 
 ### Project Status
 The project is fully implemented with a multi-timeframe IFVG backtest engine and interactive Streamlit dashboard. All core features are complete:

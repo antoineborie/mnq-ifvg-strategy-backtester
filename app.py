@@ -226,16 +226,16 @@ with st.sidebar:
                          help="Minimum gap size on M15 to qualify as FVG")
     max_fvg_age = st.slider("Max FVG Age (M15 bars)", 2, 24, 15, 1,
                              help="Maximum age of M15 FVG before expiry")
-    rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 0.8, 0.1,
+    rr_target = st.slider("Risk:Reward Target", 0.5, 5.0, 2.0, 0.1,
                            help="Target R:R ratio for take profit")
     max_risk = st.slider("Max Risk (pts)", 5.0, 60.0, 25.0, 1.0)
     min_risk = st.slider("Min Risk (pts)", 1.0, 15.0, 5.0, 1.0)
-    max_trades = st.slider("Max Trades / Day", 1, 4, 1, 1)
-    retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 60, 5,
+    max_trades = st.slider("Max Trades / Day", 1, 4, 2, 1)
+    retracement_pct = st.slider("Retracement % into IFVG zone", 20, 80, 50, 5,
                                  help="How deep price must retrace into the inverted FVG zone on M1")
-    cooldown = st.slider("Cooldown (minutes)", 0, 30, 10, 1)
+    cooldown = st.slider("Cooldown (minutes)", 0, 30, 5, 1)
     entry_start_time = st.selectbox("Entry Start Time (ET)", ['09:30', '09:35', '09:40', '09:45', '09:50', '09:55', '10:00', '10:05', '10:10', '10:15'],
-                                     index=6, help="Only look for entries after this time (later = higher win rate)")
+                                     index=3, help="Only look for entries after this time (later = higher win rate)")
     structure_lookback = st.slider("Structure Lookback (days)", 5, 60, 20, 5,
                                     help="Days of history for daily/weekly structure levels")
 
@@ -249,27 +249,27 @@ with st.sidebar:
                             help="Fixed R:R uses your R:R target. SSL targets nearest liquidity level.")
 
     st.subheader("Risk Management")
-    use_be = st.checkbox("Breakeven Protection", value=True)
+    use_be = st.checkbox("Breakeven Protection", value=False)
     be_trigger = st.slider("BE Trigger (xR)", 0.3, 2.0, 0.5, 0.1,
                             help="Move stop to breakeven after price moves this many R in your favor") if use_be else 0.5
-    use_stop_after_loss = st.checkbox("Stop Apres Perte", value=True,
+    use_stop_after_loss = st.checkbox("Stop Apres Perte", value=False,
                                        help="Arreter de trader pour la journee apres la premiere perte")
 
     partial_tp_pct = 100
 
     st.subheader("Trailing Stop")
-    use_trail = st.checkbox("Trailing Stop", value=True)
+    use_trail = st.checkbox("Trailing Stop", value=False)
     if use_trail:
-        trail_trigger = st.slider("Trail Trigger (xR)", 0.3, 2.0, 0.3, 0.1,
+        trail_trigger = st.slider("Trail Trigger (xR)", 0.3, 3.0, 1.5, 0.1,
                                    help="Start trailing after this many R in profit")
-        trail_offset = st.slider("Trail Offset (%)", 10, 70, 25, 5,
+        trail_offset = st.slider("Trail Offset (%)", 10, 70, 40, 5,
                                   help="Trail distance as % of risk")
     else:
         trail_trigger = 0.5
         trail_offset = 30
 
     st.subheader("Quality Filters")
-    use_displacement = st.checkbox("Displacement Filter", value=True,
+    use_displacement = st.checkbox("Displacement Filter", value=False,
                                     help="Require strong displacement candle behind FVG")
     if use_displacement:
         disp_body_pct = st.slider("Min Displacement Body %", 30, 80, 55, 5)
