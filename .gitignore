@@ -1,0 +1,26 @@
+# Private strategy code
+ifvg_strategy.py
+optimizer.py
+data_loader.py
+app.py
+main.py
+run_optimizer.py
+quick_test.py
+analyze_*.py
+param_sweep*.py
+test_*.py
+econ_calendar.py
+stat_analysis.py
+
+# Data
+data/
+*.pkl
+*.csv
+*.parquet
+*.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
