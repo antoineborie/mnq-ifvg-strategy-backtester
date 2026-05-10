@@ -110,14 +110,20 @@ Dashboard & visualisation
 
 # Confidentialité de la stratégie
 
-Certaines parties liées à la logique exacte de génération des signaux et à des éléments propriétaires de la stratégie ne sont volontairement pas publiées.
+Le repository public présente uniquement :
 
-Le repository public présente principalement :
+- des captures du dashboard ;
+- des résultats statistiques ;
+- des visualisations ;
+- une présentation globale du framework de recherche.
 
-- l’architecture du framework ;
-- les outils analytiques ;
-- les visualisations ;
-- les résultats statistiques.
+L’intégralité du code source, de la logique de génération des signaux et des composants propriétaires de la stratégie reste volontairement privée.
+
+L’objectif de ce repository est principalement de présenter :
+- l’approche quantitative ;
+- la méthodologie de recherche ;
+- les outils d’analyse ;
+- l’architecture globale du projet.
 
 ---
 
