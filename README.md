@@ -102,6 +102,12 @@ Dashboard & visualisation
 
 ---
 
+## Analyse macro-économique
+
+![Macro Analysis](screenshots/macro_event_analysis.png)
+
+---
+
 # Confidentialité de la stratégie
 
 Certaines parties liées à la logique exacte de génération des signaux et à des éléments propriétaires de la stratégie ne sont volontairement pas publiées.
